@@ -1,0 +1,11 @@
+name: PR Code Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  code-style:
+    uses: spacemit-robotics/scripts/.github/workflows/code-style-reusable.yml@main
+    with:
+      repo_path: .
