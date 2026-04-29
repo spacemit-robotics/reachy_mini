@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>reachy_mini</name>
+  <version>0.1.0</version>
+  <description>Reachy Mini: End-to-end robot control with vision, motor, and audio</description>
+  <depend>motor</depend>
+  <depend>vision</depend>
+  <depend>audio</depend>
+  <depend>asr</depend>
+  <depend>tts</depend>
+  <depend>vad</depend>
+  <depend>llm</depend>
+  <depend>mcp</depend>
+  <system_depend check="pkg-config --exists portaudio-2.0">portaudio19-dev</system_depend>
+  <system_depend check="pkg-config --exists sndfile">libsndfile1-dev</system_depend>
+  <system_depend check="pkg-config --exists samplerate">libsamplerate0-dev</system_depend>
+  <system_depend check="pkg-config --exists alsa">libasound2-dev</system_depend>
+  <system_depend check="pkg-config --exists fftw3f">libfftw3-dev</system_depend>
+  <system_depend check="pkg-config --exists libcurl">libcurl4-openssl-dev</system_depend>
+  <system_depend check="pkg-config --exists libgpiod">libgpiod-dev</system_depend>
+  <system_depend check="pkg-config --exists protobuf">libprotobuf-dev</system_depend>
+  <system_depend check="which protoc">protobuf-compiler</system_depend>
+  <system_depend check="pkg-config --exists grpc++">libgrpc++-dev</system_depend>
+  <system_depend check="which grpc_cpp_plugin">protobuf-compiler-grpc</system_depend>
+  <system_depend check="which pkg-config">pkg-config</system_depend>
+  <system_depend check="which cmake">cmake</system_depend>
+  <system_depend check="meson --version">meson</system_depend>
+  <system_depend check="ninja --version">ninja-build</system_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+</export>
+</package>

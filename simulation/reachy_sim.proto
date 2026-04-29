@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package reachy.sim;
+
+// Reachy Mini 仿真服务接口
+service ReachySimService {
+  // 流式控制接口：发送关节指令，接收仿真反馈
+  rpc ControlStream (stream ControlRequest) returns (stream SimState);
+}
+
+// 控制指令 (关节级，IK 由客户端完成)
+message ControlRequest {
+  // 身体旋转关节 (弧度)
+  float body_yaw = 1;
+
+  // Stewart 平台 6 个关节 (弧度)
+  float stewart_1 = 2;
+  float stewart_2 = 3;
+  float stewart_3 = 4;
+  float stewart_4 = 5;
+  float stewart_5 = 6;
+  float stewart_6 = 7;
+
+  // 天线角度 (弧度)
+  float right_antenna = 8;
+  float left_antenna = 9;
+
+  // 仿真同步命令 (如暂停/恢复)
+  bool paused = 10;
+}
+
+// 仿真状态反馈
+message SimState {
+  // 当前仿真内部时间
+  double sim_time = 1;
+
+  // 状态描述 (如 "Running", "Paused")
+  string status = 2;
+}

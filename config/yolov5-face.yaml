@@ -1,0 +1,12 @@
+# YOLOv5-Face 人脸检测示例配置（仅检测，不含 ArcFace 识别）
+model_path: ~/.cache/models/vision/yolov5-face/yolov5n-face_cut.q.onnx
+test_image: ~/.cache/assets/image/006_test.jpg
+class: deploy.yolov5_face.YOLOv5FaceDetector
+default_params:
+  conf_thres: 0.25
+  iou_thres: 0.45
+  conf_threshold: 0.25   # C++ 使用
+  iou_threshold: 0.45   # C++ 使用
+  num_threads: 4
+  providers:
+    - SpaceMITExecutionProvider
