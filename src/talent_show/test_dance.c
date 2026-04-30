@@ -120,7 +120,7 @@ int main(int argc, char *argv[]) {
     uint8_t motor_ids[MOTOR_COUNT] = {10, 11, 12, 13, 14, 15, 16, 17, 18};
 
     for (int i = 0; i < MOTOR_COUNT; i++) {
-        devs[i] = motor_alloc_uart("drv_uart_rm", port, BAUDRATE, motor_ids[i], NULL);
+        devs[i] = motor_alloc_uart("drv_uart_xl330", port, BAUDRATE, motor_ids[i], NULL);
         if (!devs[i]) {
             fprintf(stderr, "Failed to alloc motor ID %d\n", motor_ids[i]);
             return -1;
