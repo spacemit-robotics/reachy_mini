@@ -56,7 +56,7 @@ bool tracker_app_init(TrackerApp *app, const char *vision_config, const char *mo
         bool all_alloc = true;
         for (int i = 0; i < MOTOR_COUNT; i++) {
             app->motor_devs[i] =
-                motor_alloc_uart("drv_uart_rm", motor_port, 1000000, motor_ids[i], NULL);
+                motor_alloc_uart("drv_uart_xl330", motor_port, 1000000, motor_ids[i], NULL);
             if (!app->motor_devs[i]) {
                 all_alloc = false;
                 break;
