@@ -26,6 +26,8 @@
   <system_depend check="which cmake">cmake</system_depend>
   <system_depend check="meson --version">meson</system_depend>
   <system_depend check="ninja --version">ninja-build</system_depend>
+  <system_depend check="rustc --version">rustc</system_depend>
+  <system_depend check="cargo --version">cargo</system_depend>
 
   <export>
     <build_type>cmake</build_type>
