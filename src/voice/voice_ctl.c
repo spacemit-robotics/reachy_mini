@@ -115,7 +115,7 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     // 1. 初始化 9 个底层电机 (ID 10-18)
     int motors_found = 0;
     for (int i = 0; i < 9; i++) {
-        g_devs[i] = motor_alloc_uart("drv_uart_rm", serial_port ? serial_port : "/dev/ttyACM0",
+        g_devs[i] = motor_alloc_uart("drv_uart_xl330", serial_port ? serial_port : "/dev/ttyACM0",
                                     1000000, 10 + i, NULL);
         if (g_devs[i]) {
             motors_found++;
