@@ -105,7 +105,7 @@ static const CommandMapping CMD_TABLE[] = {
     {12, {"跳一段古典舞", "嗯哼歪头", "歪头舞", NULL}, NULL, 0.0f, "嗯哼歪头"},
     {13, {"跟着我", "跟随我", "人脸跟踪", "看着我", NULL}, NULL, 0.0f, "人脸跟随启动"},
     {14, {"别跟了", "停止跟随", "不要跟了", "别看了", NULL}, NULL, 0.0f, "跟随停止"},
-    {15, {"跟着手掌", "手势跟随","手势跟踪", "跟随手势", "跟着手", NULL}, NULL, 0.0f, "手势跟随启动"},
+    {15, {"跟着手掌", "手势跟随", "手势跟踪", "跟随手势", "跟着手", NULL}, NULL, 0.0f, "手势跟随启动"},
     {16, {"停止手势", "别跟手了", NULL}, NULL, 0.0f, "手势跟随停止"},
 };
 static const int CMD_TABLE_SIZE = sizeof(CMD_TABLE) / sizeof(CMD_TABLE[0]);

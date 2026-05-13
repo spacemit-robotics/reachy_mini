@@ -16,14 +16,18 @@
  * [--model qwen2.5:0.5b] [--input-device 0] [--output-device 0]
  */
 
+#include <sys/stat.h>
+#include <unistd.h>
+#include <csignal>
+#include <cstring>
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cmath>
 #include <condition_variable>
-#include <csignal>
-#include <cstring>
 #include <deque>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -32,7 +36,6 @@
 #include <queue>
 #include <string>
 #include <thread>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -58,6 +61,94 @@
 
 // Config file parser
 #include "media/config_parser.hpp"
+
+// ============================================================================
+// 守护进程管理 (start / stop / status)
+// ============================================================================
+
+static const char PID_FILE[] = "/tmp/reachy_voice_bot.pid";
+static const char STATE_FILE[] = "/tmp/reachy_voice_bot.state";
+static const char LOG_FILE[] = "/tmp/reachy_voice_bot.log";
+
+static pid_t get_stored_pid() {
+    std::ifstream f(PID_FILE);
+    if (!f.is_open()) return 0;
+    pid_t pid = 0;
+    f >> pid;
+    return pid;
+}
+
+static bool is_daemon_running() {
+    pid_t pid = get_stored_pid();
+    if (pid <= 0) return false;
+    return (kill(pid, 0) == 0);
+}
+
+static void write_state(const std::string &state) {
+    std::ofstream f(STATE_FILE, std::ios::trunc);
+    if (f.is_open()) f << state << std::endl;
+}
+
+static std::string read_state() {
+    std::ifstream f(STATE_FILE);
+    if (!f.is_open()) return "未知";
+    std::string s;
+    std::getline(f, s);
+    return s.empty() ? "未知" : s;
+}
+
+// 根据动作 ID 更新运行状态文件
+static void update_mode_state(int action) {
+    if (action == 13)      write_state("人脸跟随");
+    else if (action == 15) write_state("手势跟踪");
+    else if (action == 14 || action == 16) write_state("对话模式");
+}
+
+static void daemon_cleanup() {
+    // 仅清理属于当前进程的 PID 文件
+    pid_t stored = get_stored_pid();
+    if (stored == getpid()) {
+        unlink(PID_FILE);
+        unlink(STATE_FILE);
+    }
+}
+
+static void do_stop() {
+    pid_t pid = get_stored_pid();
+    if (pid > 0 && kill(pid, 0) == 0) {
+        kill(pid, SIGTERM);
+        // 等待进程退出 (最多 5 秒)
+        for (int i = 0; i < 50; ++i) {
+            usleep(100000);
+            if (kill(pid, 0) != 0) break;
+        }
+        if (kill(pid, 0) == 0) {
+            kill(pid, SIGKILL);
+            usleep(200000);
+        }
+        unlink(PID_FILE);
+        unlink(STATE_FILE);
+        std::cout << "● reachy_voice_bot (PID: " << pid << ") 已停止" << std::endl;
+    } else {
+        std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
+        // 清理残留文件
+        unlink(PID_FILE);
+        unlink(STATE_FILE);
+    }
+}
+
+static void do_status() {
+    if (is_daemon_running()) {
+        std::cout << "● reachy_voice_bot 状态: 运行中" << std::endl;
+        std::cout << "  PID: " << get_stored_pid() << std::endl;
+        std::cout << "  模式: " << read_state() << std::endl;
+    } else {
+        std::cout << "○ reachy_voice_bot 状态: 已停止" << std::endl;
+        // 清理残留文件
+        unlink(PID_FILE);
+        unlink(STATE_FILE);
+    }
+}
 
 // ============================================================================
 // 参数配置
@@ -166,7 +257,11 @@ Config parseArgs(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--list-voices") == 0) {
             cfg.list_voices = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            std::cout << "用法: " << argv[0] << " [选项]\n";
+            std::cout << "用法: " << argv[0] << " {start|stop|status} [选项]\n";
+            std::cout << "\n子命令:\n";
+            std::cout << "  start                         后台启动 (守护进程模式)\n";
+            std::cout << "  stop                          停止后台进程\n";
+            std::cout << "  status                        查看运行状态和当前模式\n";
             std::cout << "\n音频设备:\n";
             std::cout << "  -i, --input-device <id>       输入设备索引 (默认: 系统默认)\n";
             std::cout << "  -o, --output-device <id>      输出设备索引 (默认: 系统默认)\n";
@@ -240,9 +335,79 @@ void listAudioDevices() {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
+    // 提升 new_argv 作用域，防止守护进程模式下 argv 悬空指针
+    std::vector<char *> new_argv;
+
+    // -------------------------------------------------------------------------
+    // 守护进程管理: start / stop / status
+    // -------------------------------------------------------------------------
+    if (argc >= 2) {
+        std::string first_arg = argv[1];
+        if (first_arg == "stop") {
+            do_stop();
+            return 0;
+        }
+        if (first_arg == "status") {
+            do_status();
+            return 0;
+        }
+        if (first_arg == "start") {
+            if (is_daemon_running()) {
+                std::cout << "● reachy_voice_bot 已在运行中 (PID: "
+                    << get_stored_pid() << ")" << std::endl;
+                return 0;
+            }
+            // fork 守护进程
+            pid_t pid = fork();
+            if (pid < 0) {
+                perror("fork 失败");
+                return 1;
+            }
+            if (pid > 0) {
+                // 父进程：记录子进程 PID 并退出
+                std::ofstream pf(PID_FILE, std::ios::trunc);
+                pf << pid;
+                std::cout << "● reachy_voice_bot 已启动 (PID: " << pid << ")" << std::endl;
+                return 0;
+            }
+            // 子进程：守护进程化
+            setsid();
+            // 关闭 stdin，重定向 stdout/stderr 到日志文件
+            freopen("/dev/null", "r", stdin);
+            if (!freopen(LOG_FILE, "a", stdout)) {
+                perror("无法打开日志文件");
+                _exit(1);
+            }
+            freopen(LOG_FILE, "a", stderr);
+            // 关闭继承的文件描述符 (3~1023)
+            for (int fd = 3; fd < 1024; ++fd) close(fd);
+            // 移除 "start" 参数，让后续 parseArgs 正常工作
+            // 构造新的 argv: argv[0], argv[2], argv[3], ...
+            new_argv.push_back(argv[0]);
+            for (int i = 2; i < argc; ++i) {
+                new_argv.push_back(argv[i]);
+            }
+            argc = static_cast<int>(new_argv.size());
+            argv = new_argv.data();
+        }
+    }
+
     signal(SIGINT, voiceSignalHandler);
+    signal(SIGTERM, voiceSignalHandler);
+
+    // 注册退出清理 (清理 PID/state 文件)
+    atexit(daemon_cleanup);
+
+    // 写入当前进程 PID (前台模式也支持 status 查询)
+    {
+        std::ofstream pf(PID_FILE, std::ios::trunc);
+        pf << getpid();
+    }
 
     Config cfg = parseArgs(argc, argv);
+
+    // 初始状态: 初始化中 (各引擎就绪后切换为 对话模式)
+    write_state("初始化中");
 
     // -------------------------------------------------------------------------
     // 加载配置文件 (优先级: 命令行 > 配置文件 > 自动探测)
@@ -878,7 +1043,7 @@ int main(int argc, char *argv[]) {
                                         if (pending_action == 14 || pending_action == 16) {
                                             std::cout << getTimestamp() << " [NPU围栏] 停止跟踪模式以释放 TCM 资源\n";
                                             voice_ctl_execute(pending_action);
-                                            
+                                            update_mode_state(pending_action);
                                             std::string reply = "好的，停止跟随";
                                             std::cout << getTimestamp() << " [NPU围栏] 语音回复: \"" << reply << "\"\n";
                                             auto tts_result = pipeline_ctx.tts->Call(reply);
@@ -889,7 +1054,8 @@ int main(int argc, char *argv[]) {
                                                     pipeline_ctx.tts_sample_rate);
                                             }
                                         } else {
-                                            std::cout << getTimestamp() << " [NPU围栏] 跟踪模式运行中，拦截指令: \"" << text << "\"\n";
+                                            std::cout << getTimestamp() << " [NPU围栏] 跟踪模式运行中，拦截指令: \""
+                                                << text << "\"\n";
                                         }
                                         // 只要是在跟随模式下进入此逻辑，处理完（或拦截后）直接结束本轮对话
                                         g_processing = false; g_barge_in = false;
@@ -961,6 +1127,7 @@ int main(int argc, char *argv[]) {
                                                 }
                                             } else {
                                                 int res = voice_ctl_execute(pending_action);
+                                                update_mode_state(pending_action);
                                                 if (res == ACTION_LIMIT_EXCEEDED) {
                                                     std::string limit_reply = "我已经到极限啦";
                                                     std::cout << getTimestamp()
@@ -1080,6 +1247,7 @@ int main(int argc, char *argv[]) {
                                                 }
                                             } else {
                                                 int res = voice_ctl_execute(pending_action);
+                                                update_mode_state(pending_action);
                                                 if (res == ACTION_LIMIT_EXCEEDED) {
                                                     std::string limit_reply = "我已经到极限啦";
                                                     std::cout << getTimestamp()
@@ -1149,6 +1317,9 @@ int main(int argc, char *argv[]) {
         }
         std::cout << getTimestamp() << " [开机问候] 播放完成，开始监听\n";
     }
+
+    // 所有初始化完成，切换为对话模式
+    write_state("对话模式");
 
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

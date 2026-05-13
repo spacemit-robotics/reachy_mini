@@ -3,13 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-<<<<<<< HEAD
 #ifndef CONFIG_PARSER_HPP
 #define CONFIG_PARSER_HPP
-=======
-#ifndef MEDIA_CONFIG_PARSER_HPP
-#define MEDIA_CONFIG_PARSER_HPP
->>>>>>> 5c03a11 (feat: add config file for start parameters)
 
 #include <string>
 
@@ -69,8 +64,4 @@ struct ConfigFromFile {
  */
 bool loadConfigFromYaml(const std::string &path, ConfigFromFile &out);
 
-<<<<<<< HEAD
 #endif  // CONFIG_PARSER_HPP
-=======
-#endif  // MEDIA_CONFIG_PARSER_HPP
->>>>>>> 5c03a11 (feat: add config file for start parameters)
