@@ -20,10 +20,21 @@
 #include "tracker_app_helper.h"
 
 static volatile int g_running = 1;
+static volatile int g_paused = 0;
 
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
+}
+
+static void pause_handler(int sig) {
+    (void)sig;
+    g_paused = 1;
+}
+
+static void resume_handler(int sig) {
+    (void)sig;
+    g_paused = 0;
 }
 
 // 获取当前时间（微秒）
@@ -174,6 +185,8 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    signal(SIGUSR1, pause_handler);
+    signal(SIGUSR2, resume_handler);
 
     printf("开始手势跟随循环，按 Ctrl+C 退出\n");
     FaceDetectionResult detections[MAX_DETECTIONS];
@@ -183,6 +196,12 @@ int main(int argc, char *argv[]) {
     uint64_t last_loop_us = get_time_us();
 
     while (g_running) {
+        // NPU 分时复用：收到 SIGUSR1 时暂停推理循环
+        if (g_paused) {
+            usleep(50000);
+            continue;
+        }
+
         if (!camera_grab_frame(app.camera, 100))
             continue;
         frame++;
