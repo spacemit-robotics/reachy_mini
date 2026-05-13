@@ -90,7 +90,11 @@ void tracker_app_cleanup(TrackerApp *app) {
             async_motor_controller_destroy(app->async_motor_ctrl);
         }
         if (app->motor_devs) {
-            motor_free(app->motor_devs, app->motor_count);
+            if (app->release_flag == -1) {
+                printf("[TrackerApp] release_flag is -1, skipping motor_free to keep torque.\n");
+            } else {
+                motor_free(app->motor_devs, app->motor_count);
+            }
             free(app->motor_devs);
         }
     }

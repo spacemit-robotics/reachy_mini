@@ -34,6 +34,7 @@ static void print_usage(const char *program_name)
     printf("  --no-gui              禁用 GUI 窗口\n");
     printf("  --control             启用电机跟踪控制\n");
     printf("  --port <p>            电机串口路路径 (默认: /dev/ttyACM0)\n");
+    printf("  --release-flag <v>    程序退出时的释放行为 (默认: 0, -1: 不释放)\n");
 }
 
 int main(int argc, char *argv[])
@@ -60,6 +61,7 @@ int main(int argc, char *argv[])
     bool no_gui = false;
     bool control_motor = false;
     const char *motor_port = "/dev/ttyACM0";
+    int release_flag = 0;
 
     static struct option long_options[] = {
         {"model-path", required_argument, 0, 'm'},
@@ -67,11 +69,12 @@ int main(int argc, char *argv[])
         {"no-gui", no_argument, 0, 'n'},
         {"control", no_argument, 0, 'C'},
         {"port", required_argument, 0, 'p'},
+        {"release-flag", required_argument, 0, 'R'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:c:nCp:h", long_options, NULL)) !=
+    while ((opt = getopt_long(argc, argv, "m:c:nCp:R:h", long_options, NULL)) !=
             -1)
     {
         switch (opt)
@@ -90,6 +93,9 @@ int main(int argc, char *argv[])
             break;
         case 'p':
             motor_port = optarg;
+            break;
+        case 'R':
+            release_flag = atoi(optarg);
             break;
         default:
             print_usage(argv[0]);
@@ -116,6 +122,7 @@ int main(int argc, char *argv[])
     {
         return 1;
     }
+    app.release_flag = release_flag;
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);

@@ -19,7 +19,9 @@ set(STAGING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../output/staging")
 # 依赖组件导入 — 通过 CMake config 导入（由构建系统 package.xml 保证先编译）
 # ============================================================================
 find_package(motor REQUIRED HINTS ${STAGING_DIR}/lib/cmake/motor)
-find_package(Components QUIET HINTS ${STAGING_DIR}/lib/cmake/Components)
+# NOTE: find_package(Components) 已移除 — 所有组件通过下方 ensure_component_built() 导入
+# 如果遇到 ComponentsConfig.cmake parse error，请删除损坏的文件:
+#   rm -f output/staging/lib/cmake/Components/ComponentsConfig.cmake
 
 # 自动识别组件源码路径
 set(COMPONENTS_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../components")
@@ -152,8 +154,14 @@ set(MOTOR_CTL_SOURCES
     src/motor_ctl/coordinate_to_motion.c
 )
 
-# 通用跟踪辅助
-set(TRACKER_GENERIC_SOURCES
+# 通用跟踪管理 (由 voice_bot 使用)
+set(TRACKER_MANAGER_SOURCES
+    src/tracker_generic/tracker_manager.c
+    src/tracker_generic/tracker_utils.c
+)
+
+# 跟踪器应用基础 (由 face_tracker/gesture_tracker 使用)
+set(TRACKER_APP_SOURCES
     src/tracker_generic/tracker_app_helper.c
     src/tracker_generic/tracker_utils.c
 )
@@ -190,7 +198,7 @@ add_executable(face_tracker
     src/face_tracker.c
     ${KINEMATICS_SOURCES}
     ${MOTOR_CTL_SOURCES}
-    ${TRACKER_GENERIC_SOURCES}
+    ${TRACKER_APP_SOURCES}
     ${VISION_WRAPPER_SOURCES}
 )
 target_compile_definitions(face_tracker PRIVATE CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
@@ -207,7 +215,7 @@ add_executable(gesture_tracker
     src/gesture_tracker.c
     ${KINEMATICS_SOURCES}
     ${MOTOR_CTL_SOURCES}
-    ${TRACKER_GENERIC_SOURCES}
+    ${TRACKER_APP_SOURCES}
     ${VISION_WRAPPER_SOURCES}
 )
 target_compile_definitions(gesture_tracker PRIVATE CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config")
@@ -236,7 +244,7 @@ if(BUILD_TEST_DANCE)
             src/talent_show/audio/audio_player.c
             ${MOTOR_CTL_SOURCES}
             ${KINEMATICS_SOURCES}
-            src/tracker_generic/tracker_utils.c
+            ${TRACKER_MANAGER_SOURCES}
         )
         target_compile_definitions(test_dance PRIVATE DANCE_AUDIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio")
         target_link_libraries(test_dance
@@ -301,7 +309,7 @@ if(BUILD_VOICE_BOT)
         src/voice/src/mcp_action_provider.cpp
         ${MOTOR_CTL_SOURCES}
         ${KINEMATICS_SOURCES}
-        src/tracker_generic/tracker_utils.c
+        ${TRACKER_MANAGER_SOURCES}
         src/talent_show/dance_interface.c
         src/talent_show/dance_player.c
         src/talent_show/audio/audio_player.c

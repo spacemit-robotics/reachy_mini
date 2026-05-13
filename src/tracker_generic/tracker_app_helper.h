@@ -30,6 +30,7 @@ extern "C"
         struct motor_dev **motor_devs;
         int motor_count;
         bool motor_initialized;
+        int release_flag;  // 0: release motor (default), -1: keep torque
     } TrackerApp;
 
     /**

@@ -7,6 +7,7 @@
 #define VOICE_CTL_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 class AsyncMotorController;
@@ -60,6 +61,30 @@ AsyncMotorController *voice_ctl_get_controller(void);
  * @brief 清理底层电机资源并回正
  */
 void voice_ctl_cleanup(void);
+
+/**
+ * @brief 设置人脸跟踪使用的相机 ID
+ *
+ * @param camera_id 相机设备 ID (默认: 0)
+ */
+void voice_ctl_set_camera_id(int camera_id);
+
+/**
+ * @brief 暂停所有运行中的 tracker (释放 NPU 给语音链路使用)
+ */
+void voice_ctl_tracker_pause_all(void);
+
+/**
+ * @brief 恢复所有运行中的 tracker
+ */
+void voice_ctl_tracker_resume_all(void);
+
+/**
+ * @brief 检查是否有任何 tracker 正在运行
+ *
+ * @return bool true 表示正在运行
+ */
+bool voice_ctl_tracker_any_running(void);
 
 #ifdef __cplusplus
 }

@@ -6,8 +6,11 @@
 #include "voice_ctl.h"
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <signal.h>
 
 // 包含 reachy-mini 基础动作库和异步电机 API
 #include "../talent_show/audio/audio_player.h"
@@ -15,11 +18,13 @@
 #include "../talent_show/dance_player.h"
 #include "motion_api.h"
 #include "motor_controller.h"
+#include "tracker_manager.h"
 
 // 内部驱动和管理变量
 static struct motor_dev *g_devs[9];
 static AsyncMotorController *g_async_motor_ctrl = NULL;
 static bool g_initialized = false;
+static int g_camera_id = 0;  // 跟踪相机 ID
 
 // 累计目标角度状态缓存 (用于增量步进与限位控制)
 static float g_target_r = 0.0f;
@@ -98,6 +103,10 @@ static const CommandMapping CMD_TABLE[] = {
     {10, {"跳一段杰克逊", "杰克逊", "方块步", NULL}, NULL, 0.0f, "杰克逊方块步"},
     {11, {"跳一段小鸡啄米", "小鸡啄米", NULL}, NULL, 0.0f, "小鸡啄米"},
     {12, {"跳一段古典舞", "嗯哼歪头", "歪头舞", NULL}, NULL, 0.0f, "嗯哼歪头"},
+    {13, {"跟着我", "跟随我", "人脸跟踪", "看着我", NULL}, NULL, 0.0f, "人脸跟随启动"},
+    {14, {"别跟了", "停止跟随", "不要跟了", "别看了", NULL}, NULL, 0.0f, "跟随停止"},
+    {15, {"跟着手掌", "手势跟随","手势跟踪", "跟随手势", "跟着手", NULL}, NULL, 0.0f, "手势跟随启动"},
+    {16, {"停止手势", "别跟手了", NULL}, NULL, 0.0f, "手势跟随停止"},
 };
 static const int CMD_TABLE_SIZE = sizeof(CMD_TABLE) / sizeof(CMD_TABLE[0]);
 
@@ -162,6 +171,9 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     // 5. 初始化完成后，将常规动作速度提高到 50
     async_motor_controller_set_speed_limit(g_async_motor_ctrl, 50.0f);
 
+    // 6. 初始化 TrackerManager
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+
     g_initialized = true;
     printf("[VoiceCtl] 动作控制模块准备就绪 (运行速度: 50deg/s)\n");
 
@@ -175,6 +187,8 @@ void voice_ctl_cleanup(void) {
     printf("[VoiceCtl] 正在清理动作模块...\n");
 
     if (g_async_motor_ctrl) {
+        // 先停止所有 tracker
+        tracker_stop_all();
         // 先发送回正指令，等待一会儿再停止
         async_motor_controller_set_target(g_async_motor_ctrl, 0, 0, 0, 0, 0, 0);
         usleep(100000);
@@ -193,6 +207,12 @@ void voice_ctl_cleanup(void) {
 
 AsyncMotorController *voice_ctl_get_controller(void) {
     return g_async_motor_ctrl;
+}
+
+void voice_ctl_set_camera_id(int camera_id) {
+    g_camera_id = camera_id;
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+    printf("[VoiceCtl] 跟踪相机 ID 设置为: %d\n", g_camera_id);
 }
 
 // ==========================================
@@ -301,6 +321,20 @@ int voice_ctl_execute(int action_id) {
         g_target_ant_l = 0;
         break;
     }
+    case 13:
+        printf("[VoiceCtl] 启动人脸跟随模式...\n");
+        return tracker_start(TRACKER_TYPE_FACE);
+    case 14:
+    case 16:
+        printf("[VoiceCtl] 停止跟随模式...\n");
+        tracker_stop_all();
+        // 重置目标角度缓存，防止下次移动突变
+        g_target_r = 0; g_target_p = 0; g_target_y = 0;
+        g_target_body = 0; g_target_ant_r = 0; g_target_ant_l = 0;
+        return 0;
+    case 15:
+        printf("[VoiceCtl] 启动手势跟随模式...\n");
+        return tracker_start(TRACKER_TYPE_GESTURE);
     default:
         break;
     }
@@ -337,4 +371,23 @@ int voice_ctl_execute(int action_id) {
                                         g_target_body, g_target_ant_r, g_target_ant_l);
 
     return 0;
+}
+
+// ==========================================
+// 人脸跟踪 暂停/恢复 (NPU 分时复用)
+// ==========================================
+
+void voice_ctl_tracker_pause_all(void) {
+    tracker_pause_all();
+}
+
+void voice_ctl_tracker_resume_all(void) {
+    tracker_resume_all();
+}
+
+bool voice_ctl_tracker_any_running(void) {
+    for (int i = 0; i < TRACKER_TYPE_MAX; i++) {
+        if (tracker_is_running(i)) return true;
+    }
+    return false;
 }

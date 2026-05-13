@@ -80,6 +80,9 @@ struct Config {
     // Motor Controller configuration
     std::string motor_port = "/dev/ttyACM0";
 
+    // 人脸跟踪相机 ID
+    int camera_id = 0;
+
     // MCP 配置
     std::string mcp_config_path = "";
 
@@ -119,6 +122,8 @@ Config parseArgs(int argc, char *argv[]) {
             cfg.playback_channels = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "--motor-port") == 0 && i + 1 < argc) {
             cfg.motor_port = argv[++i];
+        } else if (strcmp(argv[i], "--camera-id") == 0 && i + 1 < argc) {
+            cfg.camera_id = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "--save-audio") == 0) {
             cfg.save_audio = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -150,6 +155,7 @@ Config parseArgs(int argc, char *argv[]) {
             std::cout << "\n调试:\n";
             std::cout << "  --save-audio [file]           保存录音 (默认: voice_debug.wav)\n";
             std::cout << "  --motor-port <port>           电机串口路径 (默认: /dev/ttyACM0)\n";
+            std::cout << "  --camera-id <id>              人脸跟踪相机ID (默认: 0)\n";
             std::cout << "\nMCP:\n";
             std::cout << "  --mcp-config <path>           MCP配置文件 (启用工具调用)\n";
             std::cout << "\n其他:\n";
@@ -235,6 +241,7 @@ int main(int argc, char *argv[]) {
     if (voice_ctl_init(cfg.motor_port.c_str(), 0.0f) < 0) {
         std::cerr << getTimestamp() << " 警告: 电机初始化失败, 执行运动指令时可能受限\n";
     }
+    voice_ctl_set_camera_id(cfg.camera_id);
 
     // -------------------------------------------------------------------------
     // 1-4. 初始化引擎
@@ -676,6 +683,29 @@ int main(int argc, char *argv[]) {
                             std::string text = result->GetText();
                             std::cout << getTimestamp() << " [ASR] 识别完成: \"" << text << "\"\n";
 
+                            // 检查关机/睡眠指令
+                            if (text.find("睡觉吧") != std::string::npos ||
+                                text.find("关机") != std::string::npos) {
+                                std::cout << getTimestamp()
+                                    << " [关机指令] 检测到: \"" << text << "\"\n";
+                                std::string farewell = "好的，再见，下次再聊";
+                                auto tts_bye = tts->Call(farewell);
+                                if (tts_bye && tts_bye->IsSuccess()) {
+                                    auto audio_bye = tts_bye->GetAudioData();
+                                    enqueuePlayback(
+                                        pcm16BytesToFloat(audio_bye), tts_sample_rate);
+                                    // 等待告别语播放完成
+                                    while (is_playing.load() && g_running) {
+                                        std::this_thread::sleep_for(
+                                            std::chrono::milliseconds(50));
+                                    }
+                                }
+                                std::cout << getTimestamp()
+                                    << " [关机指令] 正在终止程序...\n";
+                                g_running = false;
+                                break;
+                            }
+
                             // 1. 将意图映射转换为动作 ID，并获取匹配到的关键词
                             char matched_keyword[64] = {0};
                             int pending_action = voice_ctl_match(
@@ -690,10 +720,41 @@ int main(int argc, char *argv[]) {
                                 g_process_thread = std::make_unique<std::thread>(
                                     [&pipeline_ctx, text, pending_action, keyword_str,
                                         &dance_audio_cfg, &player, &cfg, &playback_paused]() {
+                                    // ========== NPU 逻辑围栏 (严格拦截版) ==========
+                                    // 跟随期间 NPU 被占用，拦截除“停止”指令外的所有输入
+                                    if (voice_ctl_tracker_any_running()) {
+                                        if (pending_action == 14 || pending_action == 16) {
+                                            std::cout << getTimestamp() << " [NPU围栏] 停止跟踪模式以释放 TCM 资源\n";
+                                            voice_ctl_execute(pending_action);
+                                            
+                                            std::string reply = "好的，停止跟随";
+                                            std::cout << getTimestamp() << " [NPU围栏] 语音回复: \"" << reply << "\"\n";
+                                            auto tts_result = pipeline_ctx.tts->Call(reply);
+                                            if (tts_result && tts_result->IsSuccess()) {
+                                                auto audio_bytes = tts_result->GetAudioData();
+                                                pipeline_ctx.enqueue_playback(
+                                                    pcm16BytesToFloat(audio_bytes),
+                                                    pipeline_ctx.tts_sample_rate);
+                                            }
+                                        } else {
+                                            std::cout << getTimestamp() << " [NPU围栏] 跟踪模式运行中，拦截指令: \"" << text << "\"\n";
+                                        }
+                                        // 只要是在跟随模式下进入此逻辑，处理完（或拦截后）直接结束本轮对话
+                                        g_processing = false; g_barge_in = false;
+                                        return;
+                                    }
+                                    // ========== NPU 逻辑围栏结束 ==========
+
                                     if (pending_action != ACTION_NONE && !keyword_str.empty()) {
-                                        // 2a. 命中关键词：直接语音回复 "好的，[关键词]"，绕过
-                                        // LLM
-                                        std::string reply = "好的，" + keyword_str;
+                                        // 2a. 命中关键词：直接语音回复，绕过 LLM
+                                        std::string reply;
+                                        if (pending_action == 13 || pending_action == 15) {
+                                            reply = "好的，即将启动跟随";
+                                        } else if (pending_action == 14 || pending_action == 16) {
+                                            reply = "好的，停止跟随";
+                                        } else {
+                                            reply = std::string("好的，") + keyword_str;
+                                        }
                                         std::cout << getTimestamp()
                                             << " [关键词命中] 语音回复: \"" << reply << "\"\n";
 
@@ -921,6 +982,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // 播放开机问候语
+    {
+        std::string greeting = "欢迎使用 Reachy mini 应用，请开始对话吧";
+        std::cout << getTimestamp() << " [开机问候] " << greeting << "\n";
+        auto tts_greeting = tts->Call(greeting);
+        if (tts_greeting && tts_greeting->IsSuccess()) {
+            auto audio_data = tts_greeting->GetAudioData();
+            enqueuePlayback(pcm16BytesToFloat(audio_data), tts_sample_rate);
+            // 等待问候语播放完成再开始监听
+            while (is_playing.load() && g_running) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
+        std::cout << getTimestamp() << " [开机问候] 播放完成，开始监听\n";
+    }
+
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -961,6 +1038,15 @@ int main(int argc, char *argv[]) {
         saveWav(cfg.audio_file, recorded_audio, 16000);
     }
 
+    voice_ctl_cleanup();
+
+    // 显式释放 AI 引擎，确保 ONNX SpaceMIT EP 的 TCM 资源被正确归还内核
+    asr.reset();
+    vad.reset();
+    tts.reset();
+    llm.reset();
+
+    // 确保退出时释放所有跟踪器资源
     voice_ctl_cleanup();
 
     std::cout << "\n" << getTimestamp() << " [已退出]\n";
