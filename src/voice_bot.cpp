@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
@@ -31,6 +32,7 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -50,6 +52,12 @@
 
 // Talent Show - Dance Player
 #include "talent_show/dance_player.h"
+
+// Media device auto-detection
+#include "media/device_detect.hpp"
+
+// Config file parser
+#include "media/config_parser.hpp"
 
 // ============================================================================
 // 参数配置
@@ -86,8 +94,21 @@ struct Config {
     // MCP 配置
     std::string mcp_config_path = "";
 
+    // 配置文件路径
+    std::string config_path = "";
+
     // 跟踪 --model 是否被显式指定
     bool llm_model_set = false;
+
+    // 跟踪音频参数是否被显式指定
+    bool audio_params_set = false;
+
+    // 跟踪其他 CLI 参数是否被显式指定
+    bool tts_set = false;
+    bool camera_id_set = false;
+    bool motor_port_set = false;
+    bool input_device_set = false;
+    bool output_device_set = false;
 };
 
 Config parseArgs(int argc, char *argv[]) {
@@ -95,6 +116,7 @@ Config parseArgs(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tts") == 0 && i + 1 < argc) {
             cfg.tts_type = argv[++i];
+            cfg.tts_set = true;
         } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
             cfg.llm_model = argv[++i];
             cfg.llm_model_set = true;
@@ -106,24 +128,32 @@ Config parseArgs(int argc, char *argv[]) {
             (strcmp(argv[i], "--input-device") == 0 || strcmp(argv[i], "-i") == 0) &&
             i + 1 < argc) {
             cfg.input_device = std::stoi(argv[++i]);
+            cfg.input_device_set = true;
         } else if (
             (strcmp(argv[i], "--output-device") == 0 || strcmp(argv[i], "-o") == 0) &&
             i + 1 < argc) {
             cfg.output_device = std::stoi(argv[++i]);
+            cfg.output_device_set = true;
         } else if (strcmp(argv[i], "--list-devices") == 0 || strcmp(argv[i], "-l") == 0) {
             cfg.list_devices = true;
         } else if (strcmp(argv[i], "--capture-rate") == 0 && i + 1 < argc) {
             cfg.capture_rate = std::stoi(argv[++i]);
+            cfg.audio_params_set = true;
         } else if (strcmp(argv[i], "--capture-channels") == 0 && i + 1 < argc) {
             cfg.capture_channels = std::stoi(argv[++i]);
+            cfg.audio_params_set = true;
         } else if (strcmp(argv[i], "--playback-rate") == 0 && i + 1 < argc) {
             cfg.playback_rate = std::stoi(argv[++i]);
+            cfg.audio_params_set = true;
         } else if (strcmp(argv[i], "--playback-channels") == 0 && i + 1 < argc) {
             cfg.playback_channels = std::stoi(argv[++i]);
+            cfg.audio_params_set = true;
         } else if (strcmp(argv[i], "--motor-port") == 0 && i + 1 < argc) {
             cfg.motor_port = argv[++i];
+            cfg.motor_port_set = true;
         } else if (strcmp(argv[i], "--camera-id") == 0 && i + 1 < argc) {
             cfg.camera_id = std::stoi(argv[++i]);
+            cfg.camera_id_set = true;
         } else if (strcmp(argv[i], "--save-audio") == 0) {
             cfg.save_audio = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -131,6 +161,8 @@ Config parseArgs(int argc, char *argv[]) {
             }
         } else if (strcmp(argv[i], "--mcp-config") == 0 && i + 1 < argc) {
             cfg.mcp_config_path = argv[++i];
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            cfg.config_path = argv[++i];
         } else if (strcmp(argv[i], "--list-voices") == 0) {
             cfg.list_voices = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -158,6 +190,9 @@ Config parseArgs(int argc, char *argv[]) {
             std::cout << "  --camera-id <id>              人脸跟踪相机ID (默认: 0)\n";
             std::cout << "\nMCP:\n";
             std::cout << "  --mcp-config <path>           MCP配置文件 (启用工具调用)\n";
+            std::cout << "\n配置文件:\n";
+            std::cout << "  --config <path>               YAML配置文件路径\n";
+            std::cout << "                                优先级: 命令行 > 配置文件 > 自动探测\n";
             std::cout << "\n其他:\n";
             std::cout << "  -h, --help                    显示帮助\n";
             exit(0);
@@ -209,6 +244,90 @@ int main(int argc, char *argv[]) {
 
     Config cfg = parseArgs(argc, argv);
 
+    // -------------------------------------------------------------------------
+    // 加载配置文件 (优先级: 命令行 > 配置文件 > 自动探测)
+    // -------------------------------------------------------------------------
+    {
+        std::string yaml_path = cfg.config_path;
+        if (yaml_path.empty()) {
+            // 1. 优先使用编译时嵌入的绝对路径 (支持交叉编译时指定目标路径)
+#ifdef DEFAULT_CONFIG_PATH
+            yaml_path = DEFAULT_CONFIG_PATH;
+#endif
+            // 2. 若编译时路径不存在，回退到可执行文件同级目录
+            if (yaml_path.empty() || access(yaml_path.c_str(), R_OK) != 0) {
+                char exe_buf[1024] = {0};
+                ssize_t len = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+                if (len > 0) {
+                    exe_buf[len] = '\0';
+                    std::string exe_dir(exe_buf, std::string(exe_buf).rfind('/'));
+                    std::string fallback = exe_dir + "/config/config_paras.yaml";
+                    if (access(fallback.c_str(), R_OK) == 0) {
+                        yaml_path = fallback;
+                    }
+                }
+            }
+        }
+        if (!yaml_path.empty()) {
+            ConfigFromFile fc;
+            if (loadConfigFromYaml(yaml_path, fc)) {
+                // 音频设备 (仅在 CLI 未指定时应用)
+                if (!cfg.input_device_set && fc.input_device != INT_MIN)
+                    cfg.input_device = fc.input_device;
+                if (!cfg.output_device_set && fc.output_device != INT_MIN)
+                    cfg.output_device = fc.output_device;
+
+                // 音频参数 (仅在 CLI 未显式指定时应用)
+                if (!cfg.audio_params_set) {
+                    if (fc.capture_rate != INT_MIN && fc.capture_rate > 0)
+                        cfg.capture_rate = fc.capture_rate;
+                    if (fc.capture_channels != INT_MIN && fc.capture_channels > 0)
+                        cfg.capture_channels = fc.capture_channels;
+                    if (fc.playback_rate != INT_MIN && fc.playback_rate > 0)
+                        cfg.playback_rate = fc.playback_rate;
+                    if (fc.playback_channels != INT_MIN && fc.playback_channels > 0)
+                        cfg.playback_channels = fc.playback_channels;
+                }
+
+                // LLM
+                if (!cfg.llm_model_set && !fc.llm_model.empty())
+                    cfg.llm_model = fc.llm_model;
+                if (cfg.llm_url.empty() && !fc.llm_url.empty())
+                    cfg.llm_url = fc.llm_url;
+                if (fc.max_tokens != INT_MIN && fc.max_tokens > 0)
+                    cfg.max_tokens = fc.max_tokens;
+
+                // TTS (仅在 CLI 未指定 --tts 时应用)
+                if (!cfg.tts_set && !fc.tts_engine.empty())
+                    cfg.tts_type = fc.tts_engine;
+
+                // VAD
+                if (fc.vad_threshold > 0.0f)
+                    cfg.vad_threshold = fc.vad_threshold;
+                if (fc.silence_duration > 0.0f)
+                    cfg.silence_duration = fc.silence_duration;
+
+                // Motor (仅在 CLI 未指定 --motor-port 时应用)
+                if (!cfg.motor_port_set && !fc.motor_port.empty())
+                    cfg.motor_port = fc.motor_port;
+
+                // Camera (仅在 CLI 未指定 --camera-id 时应用)
+                if (!cfg.camera_id_set && fc.camera_id != INT_MIN)
+                    cfg.camera_id = fc.camera_id;
+
+                // MCP
+                if (cfg.mcp_config_path.empty() && !fc.mcp_config_path.empty())
+                    cfg.mcp_config_path = fc.mcp_config_path;
+
+                // Debug
+                if (fc.save_audio_set && !cfg.save_audio)
+                    cfg.save_audio = fc.save_audio;
+                if (!fc.audio_file.empty())
+                    cfg.audio_file = fc.audio_file;
+            }
+        }
+    }
+
     if (cfg.list_devices) {
         listAudioDevices();
         return 0;
@@ -222,6 +341,39 @@ int main(int argc, char *argv[]) {
     if (cfg.llm_url.empty()) {
         std::cerr << "错误: 必须通过 --llm-url 指定 LLM API 地址\n";
         return 1;
+    }
+
+    // 自动探测 Reachy Mini 多媒体设备 (未指定设备 ID 时启用)
+    if (cfg.input_device < 0 || cfg.output_device < 0 || cfg.camera_id == 0) {
+        ReachyDeviceInfo dev_info;
+        if (detectReachyMiniDevices(dev_info)) {
+            if (dev_info.audio_card_id >= 0) {
+                if (cfg.input_device < 0)
+                    cfg.input_device = dev_info.audio_card_id;
+                if (cfg.output_device < 0)
+                    cfg.output_device = dev_info.audio_card_id;
+
+                // 查询声卡硬件参数 (声道数、采样率)
+                if (!cfg.audio_params_set && queryAudioHardwareConfig(dev_info)) {
+                    if (dev_info.hw_channels > 0) {
+                        cfg.capture_channels = dev_info.hw_channels;
+                        cfg.playback_channels = dev_info.hw_channels;
+                    }
+                    if (dev_info.hw_sample_rate > 0) {
+                        cfg.capture_rate = dev_info.hw_sample_rate;
+                        cfg.playback_rate = dev_info.hw_sample_rate;
+                    }
+                }
+            }
+            if (dev_info.camera_id >= 0 && cfg.camera_id == 0) {
+                cfg.camera_id = dev_info.camera_id;
+            }
+            printDeviceInfo(dev_info);
+            // 初始化声卡音量 (PCM,0=100%, PCM,1=80%)
+            initAudioVolume(dev_info);
+        } else {
+            std::cerr << "[DeviceDetect] 警告: 未探测到 Reachy Mini 设备，使用系统默认\n";
+        }
     }
 
     std::cout << getTimestamp() << " ========================================\n";

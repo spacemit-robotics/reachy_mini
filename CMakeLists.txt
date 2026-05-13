@@ -307,6 +307,8 @@ if(BUILD_VOICE_BOT)
         src/voice/voice_pipeline.cpp
         src/voice/text_buffer.cpp
         src/voice/src/mcp_action_provider.cpp
+        src/media/device_detect.cpp
+        src/media/config_parser.cpp
         ${MOTOR_CTL_SOURCES}
         ${KINEMATICS_SOURCES}
         ${TRACKER_MANAGER_SOURCES}
@@ -315,14 +317,20 @@ if(BUILD_VOICE_BOT)
         src/talent_show/audio/audio_player.c
     )
 
+    # 项目根目录：交叉编译时可通过 -DREACHY_PROJECT_ROOT=<target_path> 覆盖
+    set(REACHY_PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH
+        "Project root on target device (for config file lookup)")
+
     target_compile_definitions(reachy_voice_bot PRIVATE 
         DANCE_AUDIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio"
         DEFAULT_MCP_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/voice/configs/mcp_robot.json"
+        DEFAULT_CONFIG_PATH="${REACHY_PROJECT_ROOT}/config/config_paras.yaml"
     )
 
     target_include_directories(reachy_voice_bot PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/voice
         ${CMAKE_CURRENT_SOURCE_DIR}/src/voice/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio
         ${SAMPLERATE_INCLUDE_DIRS}
         ${STAGING_DIR}/include/tts
@@ -364,6 +372,7 @@ if(BUILD_VOICE_BOT)
         ${FFTW3_LIBRARIES}
         ${ALSA_LIBRARIES}
         ${PORTAUDIO_LIBRARIES}
+        -ludev
     )
 
     install(TARGETS reachy_voice_bot RUNTIME DESTINATION bin)
