@@ -55,6 +55,11 @@ void MCPActionProvider::initTools() {
     add_tool("dance_jackson", "执行迈克尔·杰克逊风格的舞蹈动作", 10);
     add_tool("dance_chicken", "执行小鸡啄米风格的舞蹈动作", 11);
     add_tool("dance_uh_huh_tilt", "执行点赞/附和风格的倾斜动作", 12);
+
+    // 视觉跟踪
+    add_tool("face_follow_start", "启动人脸跟随模式，机器人会自动跟踪用户的脸转动头部", 13);
+    add_tool("gesture_follow_start", "启动手势跟随模式，机器人会自动跟踪用户的手部动作", 15);
+    add_tool("tracker_stop", "停止当前任何正在运行的视觉跟随模式 (如人脸或手势)，恢复正常语音控制", 14);
 }
 
 const std::vector<mcp::Tool> &MCPActionProvider::getTools() const {

@@ -16,10 +16,21 @@
 #include "tracker_utils.h"
 
 static volatile int g_running = 1;
+static volatile int g_paused = 0;
 
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
+}
+
+static void pause_handler(int sig) {
+    (void)sig;
+    g_paused = 1;
+}
+
+static void resume_handler(int sig) {
+    (void)sig;
+    g_paused = 0;
 }
 
 #define MAX_FACES 10
@@ -34,6 +45,7 @@ static void print_usage(const char *program_name)
     printf("  --no-gui              禁用 GUI 窗口\n");
     printf("  --control             启用电机跟踪控制\n");
     printf("  --port <p>            电机串口路路径 (默认: /dev/ttyACM0)\n");
+    printf("  --release-flag <v>    程序退出时的释放行为 (默认: 0, -1: 不释放)\n");
 }
 
 int main(int argc, char *argv[])
@@ -48,34 +60,41 @@ int main(int argc, char *argv[])
 #define CONFIG_DIR "."
 #endif
 
-    const char *config_path = argv[1];
+    const char *config_path = NULL;
     static char resolved_config[512];
-    // 如果不是绝对路径且当前目录下找不到，尝试用编译时的 CONFIG_DIR 拼接
-    if (config_path[0] != '/' && access(config_path, F_OK) != 0) {
-        snprintf(resolved_config, sizeof(resolved_config), "%s/%s", CONFIG_DIR, config_path);
-        config_path = resolved_config;
+
+    // 兼容旧的位置参数方式: argv[1] 如果不是 '-' 开头则视为配置文件
+    if (argc >= 2 && argv[1][0] != '-') {
+        config_path = argv[1];
     }
+
     const char *model_path_override = NULL;
     int camera_id = 0;
     bool no_gui = false;
     bool control_motor = false;
     const char *motor_port = "/dev/ttyACM0";
+    int release_flag = 0;
 
     static struct option long_options[] = {
+        {"config", required_argument, 0, 'f'},
         {"model-path", required_argument, 0, 'm'},
         {"camera-id", required_argument, 0, 'c'},
         {"no-gui", no_argument, 0, 'n'},
         {"control", no_argument, 0, 'C'},
         {"port", required_argument, 0, 'p'},
+        {"release-flag", required_argument, 0, 'R'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}};
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:c:nCp:h", long_options, NULL)) !=
+    while ((opt = getopt_long(argc, argv, "f:m:c:nCp:R:h", long_options, NULL)) !=
             -1)
     {
         switch (opt)
         {
+        case 'f':
+            config_path = optarg;
+            break;
         case 'm':
             model_path_override = optarg;
             break;
@@ -91,10 +110,24 @@ int main(int argc, char *argv[])
         case 'p':
             motor_port = optarg;
             break;
+        case 'R':
+            release_flag = atoi(optarg);
+            break;
         default:
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    // 配置文件路径验证与解析
+    if (!config_path) {
+        fprintf(stderr, "Error: 未指定配置文件 (使用 --config <path> 或作为第一个参数)\n");
+        print_usage(argv[0]);
+        return 1;
+    }
+    if (config_path[0] != '/' && access(config_path, F_OK) != 0) {
+        snprintf(resolved_config, sizeof(resolved_config), "%s/%s", CONFIG_DIR, config_path);
+        config_path = resolved_config;
     }
 
     // 设置人脸跟踪专用的控制参数
@@ -116,9 +149,12 @@ int main(int argc, char *argv[])
     {
         return 1;
     }
+    app.release_flag = release_flag;
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    signal(SIGUSR1, pause_handler);
+    signal(SIGUSR2, resume_handler);
 
     printf("开始人脸跟随检测循环...\n");
     FaceDetectionResult detections[MAX_FACES];
@@ -128,6 +164,12 @@ int main(int argc, char *argv[])
 
     while (g_running)
     {
+        // NPU 分时复用：收到 SIGUSR1 时暂停推理循环
+        if (g_paused) {
+            usleep(50000);
+            continue;
+        }
+
         if (!camera_grab_frame(app.camera, 100))
             continue;
         frame++;
