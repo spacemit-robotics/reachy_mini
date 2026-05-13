@@ -80,18 +80,24 @@ int tracker_start(TrackerType type) {
     printf("[TrackerManager] 正在启动 %s (%s)...\n", inst->display_name, inst->process_name);
     inst->pid = fork();
     if (inst->pid == 0) {
+        // 子进程：关闭从父进程继承的文件描述符 (串口、音频设备等)
+        // 防止子进程持有 /dev/ttyACM0 等设备 FD 导致资源冲突
+        for (int fd = 3; fd < 1024; ++fd) close(fd);
+
         // 子进程：执行可执行文件
         char camera_arg[16];
         snprintf(camera_arg, sizeof(camera_arg), "%d", g_camera_id);
 
-        // 使用 execlp 搜索 PATH
-        execlp(inst->process_name, inst->process_name, inst->config_file,
+        // 使用 --config 选项传递配置文件，避免位置参数在 POSIXLY_CORRECT 下
+        // 导致 getopt_long 提前停止解析后续选项
+        execlp(inst->process_name, inst->process_name,
+            "--config", inst->config_file,
             "--control", "--camera-id", camera_arg,
             "--release-flag", "-1", (char *)NULL);
 
         // 如果 exec 失败
         fprintf(stderr, "[TrackerManager] Error: 无法执行 %s: %s\n", inst->process_name, strerror(errno));
-        exit(1);
+        _exit(1);
     } else if (inst->pid < 0) {
         fprintf(stderr, "[TrackerManager] Error: fork 失败\n");
         return -1;
@@ -187,9 +193,29 @@ bool tracker_is_running(TrackerType type) {
 
     if (!inst->launched) return false;
 
-    // 检查进程是否还在
-    if (inst->pid > 0 && kill(inst->pid, 0) == 0) {
-        return true;
+    if (inst->pid > 0) {
+        // 尝试非阻塞回收僵尸进程，防止 kill(pid,0) 对 zombie 返回 0
+        // 导致 NPU 逻辑围栏永久拦截语音指令
+        int status;
+        pid_t result = waitpid(inst->pid, &status, WNOHANG);
+        if (result == inst->pid || (result == -1 && errno == ECHILD)) {
+            // 子进程已退出 (正常退出或崩溃)，清理状态
+            printf("[TrackerManager] %s (PID: %d) 已退出，清理状态\n",
+                inst->display_name, inst->pid);
+            inst->launched = false;
+            inst->pid = -1;
+            inst->paused = false;
+            // 恢复电机控制权
+            if (g_motor_ctrl) {
+                async_motor_controller_start(g_motor_ctrl);
+                async_motor_controller_set_target(g_motor_ctrl, 0, 0, 0, 0, 0, 0);
+            }
+            return false;
+        }
+        // 进程仍在运行
+        if (kill(inst->pid, 0) == 0) {
+            return true;
+        }
     }
 
     // 进程已不在，清理状态
