@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
     }
 
     // 设置初始速度限制比较保守
-    async_motor_controller_set_speed_limit(ctrl, 30.0f);
+    async_motor_controller_set_speed_limit(ctrl, 70.0f);
     printf("[Test] System ready. Using 30 deg/s for safety.\n");
 
     char cmd[16];

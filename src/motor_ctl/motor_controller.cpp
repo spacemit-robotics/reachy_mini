@@ -25,6 +25,7 @@ void reachy_reset_fk(const float *initial_pose);
 int reachy_calculate_fk(const float joints[7], float out_pose[16], int num_iterations);
 int motion_move_to_async(struct motor_dev **devs, float roll_deg, float pitch_deg, float yaw_deg,
                         float body_yaw_deg, float ant_r_deg, float ant_l_deg);
+void motion_set_vel_limit(float vel_rad_per_s);
 }
 
 AsyncMotorController::AsyncMotorController(struct motor_dev **devs,
@@ -200,8 +201,14 @@ void AsyncMotorController::set_speed_limit(float deg_per_sec) {
     // 将 deg/s 转换为 deg/tick (假设每 tick 是 MIN_COMMAND_INTERVAL_MS = 10ms)
     float step_per_tick = deg_per_sec * static_cast<float>(MIN_COMMAND_INTERVAL_MS) / 1000.0f;
     max_step_per_tick_.store(step_per_tick);
+
+    // 同步设置硬件 Profile Velocity 限制 (deg/s -> rad/s)
+    float vel_rad_per_s = deg_per_sec * static_cast<float>(M_PI) / 180.0f;
+    motion_set_vel_limit(vel_rad_per_s);
+
     std::cout << "[AsyncMotorCtrl] Speed limit updated: " << deg_per_sec
-                << " deg/s (step=" << step_per_tick << ")" << std::endl;
+                << " deg/s (step=" << step_per_tick << ", hw_vel="
+                << vel_rad_per_s << " rad/s)" << std::endl;
 }
 
 bool AsyncMotorController::is_moving() const { return is_moving_.load(); }

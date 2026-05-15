@@ -22,6 +22,13 @@ static float current_body = 0.0f;
 static float current_ant_r = 0.0f;
 static float current_ant_l = 0.0f;
 
+// 硬件 Profile Velocity 限制 (rad/s)，0 表示不限速
+static float g_vel_limit_rad_s = 0.0f;
+
+void motion_set_vel_limit(float vel_rad_per_s) {
+    g_vel_limit_rad_s = vel_rad_per_s;
+}
+
 // 声明外部运动学解算函数
 extern int reachy_calculate_ik(const float head_pose_world[16],
                     float out_joints[7]);
@@ -149,12 +156,13 @@ int motion_move_to(struct motor_dev **devs, float roll_deg, float pitch_deg,
     }
 
     // 根据运动幅度计算步数，确保运动平滑
-    //
+    // 系数 100 对应约 1 rad/s 的平均速度（每步 10ms，100步/rad）
+    // 提高系数或上限可降低运动速度
     int steps = (int)(max_travel * 100);  // 步数
     if (steps < 20)
     steps = 20;
-    if (steps > 200)
-    steps = 200;
+    if (steps > 400)
+    steps = 400;
 
     struct motor_cmd cmds[MOTOR_COUNT];
     for (int s = 1; s <= steps; s++) {
@@ -213,6 +221,7 @@ int motion_move_to_async(struct motor_dev **devs, float roll_deg,
     if (yaw_deg < -170.0f)
     yaw_deg = -170.0f;
 
+    // 转弧度供内部运动学解算使用
     float r = roll_deg * (float)M_PI / 180.0f;
     float p = pitch_deg * (float)M_PI / 180.0f;
     float y = yaw_deg * (float)M_PI / 180.0f;
@@ -246,7 +255,7 @@ int motion_move_to_async(struct motor_dev **devs, float roll_deg,
     for (int i = 0; i < MOTOR_COUNT; i++) {
     cmds[i].mode = MOTOR_MODE_POS;
     cmds[i].pos_des = joint_goals[i];
-    cmds[i].vel_des = 0.0f;
+    cmds[i].vel_des = g_vel_limit_rad_s;
     cmds[i].trq_des = 0.0f;
     cmds[i].kp = 0.0f;
     cmds[i].kd = 0.0f;
