@@ -82,14 +82,15 @@ static int select_best_palm(const FaceDetectionResult *results, int count, float
 }
 
 static void print_usage(const char *program_name) {
-    printf("Usage: %s <config_yaml> [options]\n", program_name);
+    printf("Usage: %s [--config <yaml>] [options]\n", program_name);
     printf("  YOLOv5-Gesture 手势跟随 (新架构重构版)\n");
     printf("Options:\n");
+    printf("  --config <path>       配置文件路径 (也可作为第一个位置参数)\n");
     printf("  --model-path <path>   覆盖 yaml 中的 model_path\n");
     printf("  --camera-id <i>       相机设备 ID (默认: 0)\n");
     printf("  --no-gui              禁用 GUI 窗口\n");
     printf("  --control             启用电机跟踪控制\n");
-    printf("  --port <p>            电机串口路路径 (默认: /dev/ttyACM0)\n");
+    printf("  --port <p>            电机串口路径 (默认: /dev/ttyACM0)\n");
     printf("  --release-flag <v>    程序退出时的释放行为 (默认: 0, -1: 不释放)\n");
 }
 
@@ -103,13 +104,14 @@ int main(int argc, char *argv[]) {
 #define CONFIG_DIR "."
 #endif
 
-    const char *config_path = argv[1];
+    const char *config_path = NULL;
     static char resolved_config[512];
-    // 如果不是绝对路径且当前目录下找不到，尝试用编译时的 CONFIG_DIR 拼接
-    if (config_path[0] != '/' && access(config_path, F_OK) != 0) {
-        snprintf(resolved_config, sizeof(resolved_config), "%s/%s", CONFIG_DIR, config_path);
-        config_path = resolved_config;
+
+    // 兼容旧的位置参数方式: argv[1] 如果不是 '-' 开头则视为配置文件
+    if (argc >= 2 && argv[1][0] != '-') {
+        config_path = argv[1];
     }
+
     const char *model_path_override = NULL;
     int camera_id = 0;
     bool no_gui = false;
@@ -118,6 +120,7 @@ int main(int argc, char *argv[]) {
     int release_flag = 0;
 
     static struct option long_options[] = {
+        {"config", required_argument, 0, 'f'},
         {"model-path", required_argument, 0, 'm'},
         {"camera-id", required_argument, 0, 'c'},
         {"no-gui", no_argument, 0, 'n'},
@@ -129,8 +132,11 @@ int main(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "m:c:nCp:R:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "f:m:c:nCp:R:h", long_options, NULL)) != -1) {
         switch (opt) {
+        case 'f':
+            config_path = optarg;
+            break;
         case 'm':
             model_path_override = optarg;
             break;
@@ -153,6 +159,17 @@ int main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    // 配置文件路径验证与解析
+    if (!config_path) {
+        fprintf(stderr, "Error: 未指定配置文件 (使用 --config <path> 或作为第一个参数)\n");
+        print_usage(argv[0]);
+        return 1;
+    }
+    if (config_path[0] != '/' && access(config_path, F_OK) != 0) {
+        snprintf(resolved_config, sizeof(resolved_config), "%s/%s", CONFIG_DIR, config_path);
+        config_path = resolved_config;
     }
 
     // 设置手势跟踪专用的控制参数（低延迟反馈优化版）
