@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
     /* 1. 分配并初始化电机 (由于 API 不再包含封装，需在此手动执行) */
     for (int i = 0; i < MOTOR_COUNT; i++) {
     devs[i] =
-        motor_alloc_uart("drv_uart_rm", port, BAUDRATE, motor_ids[i], NULL);
+        motor_alloc_uart("drv_uart_xl330", port, BAUDRATE, motor_ids[i], NULL);
     if (!devs[i]) {
         fprintf(stderr, "错误: 无法分配电机 ID %d\n", motor_ids[i]);
         motor_free(devs, i);

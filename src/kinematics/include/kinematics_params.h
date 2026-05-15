@@ -13,6 +13,16 @@ typedef struct {
     int solution;       // 0 or 1
 } LegParams;
 
+/*
+    * T_inv 是从世界坐标系到电机局部坐标系的变换矩阵（4x4，行优先）
+        3*3: 旋转部分，描述了电机坐标系相对于世界坐标系的旋转关系
+        list-4: 平移部分，世界原点在电机坐标系中的位置
+        1*4: 齐次坐标的最后一行，通常为 [0, 0, 0, 1]
+    * branch_p 是电机连接点在头部坐标系下的位置（3D向量）
+    * solution 是 IK 解算时的二选一参数，决定了使用哪个解分支（0 或 1）
+    * 这些参数是通过对机械臂进行建模和标定得到的，确保了运动学解算的准确性
+*/
+
 // Data extracted from kinematics_data.json
 static const LegParams STEWART_PARAMS[6] = {
     {  // stewart_1
