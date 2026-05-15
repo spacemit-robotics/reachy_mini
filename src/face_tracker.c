@@ -37,14 +37,15 @@ static void resume_handler(int sig) {
 
 static void print_usage(const char *program_name)
 {
-    printf("Usage: %s <config_yaml> [options]\n", program_name);
+    printf("Usage: %s [--config <yaml>] [options]\n", program_name);
     printf("  YOLOv5-Face 人脸跟随 (新架构重构版)\n");
     printf("Options:\n");
+    printf("  --config <path>       配置文件路径 (也可作为第一个位置参数)\n");
     printf("  --model-path <path>   覆盖 yaml 中的 model_path\n");
     printf("  --camera-id <i>       相机设备 ID (默认: 0)\n");
     printf("  --no-gui              禁用 GUI 窗口\n");
     printf("  --control             启用电机跟踪控制\n");
-    printf("  --port <p>            电机串口路路径 (默认: /dev/ttyACM0)\n");
+    printf("  --port <p>            电机串口路径 (默认: /dev/ttyACM0)\n");
     printf("  --release-flag <v>    程序退出时的释放行为 (默认: 0, -1: 不释放)\n");
 }
 
