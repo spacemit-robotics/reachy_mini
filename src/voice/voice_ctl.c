@@ -148,9 +148,8 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
         return -1;
     }
 
-    // 3. 按照官方高度成功的 gesture_tracker 逻辑：
-    // 在启动时不进行物理位姿同步，强制信任零位，这能有效防止因电机未校准引起的“剧烈补偿”。
-    // 默认所有目标均为 0
+    // 3. 无条件信任零位，不读取实际位姿，直接以低速向初始位姿(0,0,0)运动
+    //    硬件 Profile Velocity 保证电机不会瞬间跳变
     g_target_r = 0.0f;
     g_target_p = 0.0f;
     g_target_y = 0.0f;
@@ -158,24 +157,37 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     g_target_ant_r = 0.0f;
     g_target_ant_l = 0.0f;
 
-    // 4. 关键点：初始化动作速度设为 20, 启动控制循环
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 20.0f);
+    // 4. 设置初始化限速 (20°/s) 并启动控制循环，缓慢归零
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 50.0f);
     if (!async_motor_controller_start(g_async_motor_ctrl)) {
         printf("[VoiceCtl] 错误: AsyncWorker 线程启动失败\n");
         return -1;
     }
 
-    // 给机器人 1.5 秒时间以平稳速度 (20deg/s) 缓慢重对齐到位，避免启动冲撞
+    // 给机器人 1.5 秒时间缓慢归位
     usleep(1500000);
 
-    // 5. 初始化完成后，将常规动作速度提高到 50
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 50.0f);
+    // 5. 初始化完成后，清空硬件 Profile Velocity 寄存器 (写 0 = 不限速)
+    //    恢复到写入前的状态，后续动作由电机以最大速度执行
+    {
+        uint16_t reg_addr = 112;  // Profile Velocity register
+        uint32_t vel_zero = 0;    // 0 = unlimited speed
+        for (int i = 0; i < 9; i++) {
+            if (g_devs[i]) {
+                motor_set_paras(g_devs[i], &reg_addr, &vel_zero, 4);
+            }
+        }
+    }
+    // 禁用后续命令的硬件速度写入
+    motion_set_vel_limit(0.0f);
+    // 软件插值不限速 (设一个足够大的值，实际由电机硬件速度决定)
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 100);
 
     // 6. 初始化 TrackerManager
     tracker_manager_init(g_camera_id, g_async_motor_ctrl);
 
     g_initialized = true;
-    printf("[VoiceCtl] 动作控制模块准备就绪 (运行速度: 50deg/s)\n");
+    printf("[VoiceCtl] 动作控制模块准备就绪 (常规动作不限速)\n");
 
     return 0;
 }
