@@ -66,9 +66,13 @@
 // 守护进程管理 (start / stop / status)
 // ============================================================================
 
+// 每次 start 启动守护进程时，检查 /tmp/reachy_voice_bot.log 是否超过 2MB
+// 超过则 rename 为 .log.old（覆盖上一份旧日志），然后以 "a" 模式打开新的空日志文件
 static const char PID_FILE[] = "/tmp/reachy_voice_bot.pid";
 static const char STATE_FILE[] = "/tmp/reachy_voice_bot.state";
 static const char LOG_FILE[] = "/tmp/reachy_voice_bot.log";
+static const char LOG_FILE_OLD[] = "/tmp/reachy_voice_bot.log.old";
+static const size_t LOG_MAX_SIZE = 2 * 1024 * 1024;  // 2MB 日志上限
 
 static pid_t get_stored_pid() {
     std::ifstream f(PID_FILE);
@@ -121,6 +125,14 @@ static void kill_pid(pid_t pid) {
     }
     kill(pid, SIGKILL);
     usleep(200000);
+}
+
+// 日志轮转: 若日志超过上限则重命名为 .old，保留一份历史
+static void rotate_log() {
+    struct stat st;
+    if (stat(LOG_FILE, &st) == 0 && static_cast<size_t>(st.st_size) > LOG_MAX_SIZE) {
+        rename(LOG_FILE, LOG_FILE_OLD);
+    }
 }
 
 static void do_stop() {
@@ -405,6 +417,8 @@ int main(int argc, char *argv[]) {
             // 子进程：守护进程化
             setsid();
             is_daemon_child = true;  // 标记为守护子进程，跳过后续互斥检查
+            // 日志轮转 (超过 2MB 时保留为 .old)
+            rotate_log();
             // 关闭 stdin，重定向 stdout/stderr 到日志文件
             freopen("/dev/null", "r", stdin);
             if (!freopen(LOG_FILE, "a", stdout)) {
