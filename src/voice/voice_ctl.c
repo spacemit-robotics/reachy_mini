@@ -25,6 +25,7 @@ static struct motor_dev *g_devs[9];
 static AsyncMotorController *g_async_motor_ctrl = NULL;
 static bool g_initialized = false;
 static int g_camera_id = 0;  // 跟踪相机 ID
+static const char *g_serial_port = "/dev/ttyACM0";  // 电机串口路径
 
 // 累计目标角度状态缓存 (用于增量步进与限位控制)
 static float g_target_r = 0.0f;
@@ -182,10 +183,13 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     motion_set_vel_limit(0.0f);
     // 软件插值不限速 (设一个足够大的值，实际由电机硬件速度决定)
     // 注意: 传 0 会导致 step=0，电机无法移动；需传一个足够大的值
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 100.0f);
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 500.0f);
+
+    // 保存串口路径供 tracker 子进程使用
+    g_serial_port = serial_port ? serial_port : "/dev/ttyACM0";
 
     // 6. 初始化 TrackerManager
-    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl, g_serial_port);
 
     g_initialized = true;
     printf("[VoiceCtl] 动作控制模块准备就绪 (常规动作不限速)\n");
@@ -224,7 +228,7 @@ AsyncMotorController *voice_ctl_get_controller(void) {
 
 void voice_ctl_set_camera_id(int camera_id) {
     g_camera_id = camera_id;
-    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl, g_serial_port);
     printf("[VoiceCtl] 跟踪相机 ID 设置为: %d\n", g_camera_id);
 }
 

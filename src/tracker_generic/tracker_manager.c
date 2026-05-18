@@ -45,11 +45,15 @@ static TrackerInstance g_trackers[TRACKER_TYPE_MAX] = {
 
 static int g_camera_id = 0;
 static AsyncMotorController *g_motor_ctrl = NULL;
+static const char *g_motor_port = "/dev/ttyACM0";
 
-int tracker_manager_init(int camera_id, AsyncMotorController *motor_ctrl) {
+int tracker_manager_init(int camera_id, AsyncMotorController *motor_ctrl, const char *motor_port) {
     g_camera_id = camera_id;
     g_motor_ctrl = motor_ctrl;
-    printf("[TrackerManager] 模块初始化完成 (Camera: %d)\n", camera_id);
+    if (motor_port && motor_port[0] != '\0') {
+        g_motor_port = motor_port;
+    }
+    printf("[TrackerManager] 模块初始化完成 (Camera: %d, Port: %s)\n", camera_id, g_motor_port);
     return 0;
 }
 
@@ -93,6 +97,7 @@ int tracker_start(TrackerType type) {
         execlp(inst->process_name, inst->process_name,
             "--config", inst->config_file,
             "--control", "--camera-id", camera_arg,
+            "--port", g_motor_port,
             "--release-flag", "-1", (char *)NULL);
 
         // 如果 exec 失败
