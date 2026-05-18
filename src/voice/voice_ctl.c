@@ -183,7 +183,7 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     motion_set_vel_limit(0.0f);
     // 软件插值不限速 (设一个足够大的值，实际由电机硬件速度决定)
     // 注意: 传 0 会导致 step=0，电机无法移动；需传一个足够大的值
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 500.0f);
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 200.0f);
 
     // 保存串口路径供 tracker 子进程使用
     g_serial_port = serial_port ? serial_port : "/dev/ttyACM0";

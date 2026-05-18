@@ -179,7 +179,6 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                         } else {
                             // 走网络 MCP 调用前先验证工具是否存在
                             std::string server = ctx.mcp_manager->findServerForTool(tool_name);
-                            
                             if (server.empty()) {
                                 // 工具不存在，返回错误信息
                                 result_text = "错误: 工具 '" + tool_name + "' 不存在，请检查工具名称";
