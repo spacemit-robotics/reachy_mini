@@ -177,23 +177,30 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                             std::cout << getTimestamp() << " [LocalTool] 本地执行: " << tool_name
                                 << " -> " << result_text << "\n";
                         } else {
-                            // 走网络 MCP 调用
+                            // 走网络 MCP 调用前先验证工具是否存在
                             std::string server = ctx.mcp_manager->findServerForTool(tool_name);
-                            std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
-                                << server << " 参数: " << tool_args.dump() << std::endl;
-
-                            auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
-
-                            if (tool_result.success && !tool_result.contents.empty()) {
-                                result_text = tool_result.contents[0];
-                            } else if (!tool_result.error.empty()) {
-                                result_text = "错误: " + tool_result.error;
+                            
+                            if (server.empty()) {
+                                // 工具不存在，返回错误信息
+                                result_text = "错误: 工具 '" + tool_name + "' 不存在，请检查工具名称";
+                                std::cout << getTimestamp() << " [MCP] 工具不存在: " << tool_name << "\n";
                             } else {
-                                result_text = tool_result.rawResult.dump();
-                            }
+                                std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
+                                    << server << " 参数: " << tool_args.dump() << std::endl;
 
-                            std::cout << getTimestamp() << " [MCP] 结果: " << result_text
-                                << std::endl;
+                                auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
+
+                                if (tool_result.success && !tool_result.contents.empty()) {
+                                    result_text = tool_result.contents[0];
+                                } else if (!tool_result.error.empty()) {
+                                    result_text = "错误: " + tool_result.error;
+                                } else {
+                                    result_text = tool_result.rawResult.dump();
+                                }
+
+                                std::cout << getTimestamp() << " [MCP] 结果: " << result_text
+                                    << std::endl;
+                            }
                         }
 
                         std::string tc_id = tc.value("id", "");
