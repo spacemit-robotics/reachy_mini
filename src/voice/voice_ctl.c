@@ -94,8 +94,8 @@ static const CommandMapping CMD_TABLE[] = {
     {1, {"向右转", "右转", "往奏看", "看右边", NULL}, head_turn_right, 42.0f, "头部右转"},
     {2, {"抬头", "向上看", "往上看", "看上面", NULL}, head_look_up, 35.0f, "抬头"},
     {3, {"低头", "向下看", "往下看", "看下面", NULL}, head_look_down, 35.0f, "低头"},
-    {4, {"左歪头", "歪头", NULL}, head_tilt_left, 25.0f, "左歪头"},
-    {5, {"右歪头", NULL}, head_tilt_right, 25.0f, "右歪头"},
+    {4, {"左歪头", "左偏头", NULL}, head_tilt_left, 25.0f, "左歪头"},
+    {5, {"右歪头", "右偏头", NULL}, head_tilt_right, 25.0f, "右歪头"},
     {6, {"身体左转", "转身向左", NULL}, body_turn_left, 42.0f, "身体左转"},
     {7, {"身体右转", "转身向右", NULL}, body_turn_right, 42.0f, "身体右转"},
     {8, {"回正", "回中", "复位", "正前方", NULL}, center_all_wrap, 0.0f, "全身回中"},
@@ -181,7 +181,8 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     // 禁用后续命令的硬件速度写入
     motion_set_vel_limit(0.0f);
     // 软件插值不限速 (设一个足够大的值，实际由电机硬件速度决定)
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 100);
+    // 注意: 传 0 会导致 step=0，电机无法移动；需传一个足够大的值
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 100.0f);
 
     // 6. 初始化 TrackerManager
     tracker_manager_init(g_camera_id, g_async_motor_ctrl);
@@ -235,25 +236,38 @@ int voice_ctl_match(const char *text, char *out_keyword, size_t max_len) {
     if (!text || strlen(text) == 0)
         return ACTION_NONE;
 
-    // 模糊匹配: 遍历表中的同义词数组
+    // 最长关键词优先匹配: 遍历所有条目的所有关键词，选择匹配到的最长关键词
+    // 避免短关键词（如"歪头"）抢先匹配包含更长关键词（如"右歪头"）的文本
+    int best_action = ACTION_NONE;
+    const char *best_keyword = NULL;
+    size_t best_len = 0;
+
     for (int i = 0; i < CMD_TABLE_SIZE; i++) {
         for (int j = 0; CMD_TABLE[i].keywords[j] != NULL; j++) {
-            if (strstr(text, CMD_TABLE[i].keywords[j]) != NULL) {
-                printf("[VoiceCtl] [匹配命中] 文本 >>'%s'<< 命中了关键词 -> '%s' "
-                        "(动作:%s)\n",
-                        text, CMD_TABLE[i].keywords[j], CMD_TABLE[i].desc);
-
-                // 如果提供了输出缓冲区，则复制匹配到的关键词
-                if (out_keyword && max_len > 0) {
-                    strncpy(out_keyword, CMD_TABLE[i].keywords[j], max_len - 1);
-                    out_keyword[max_len - 1] = '\0';
+            const char *kw = CMD_TABLE[i].keywords[j];
+            if (strstr(text, kw) != NULL) {
+                size_t kw_len = strlen(kw);
+                if (kw_len > best_len) {
+                    best_len = kw_len;
+                    best_action = CMD_TABLE[i].action_id;
+                    best_keyword = kw;
                 }
-
-                return CMD_TABLE[i].action_id;
             }
         }
     }
-    return ACTION_NONE;
+
+    if (best_action != ACTION_NONE && best_keyword) {
+        printf("[VoiceCtl] [匹配命中] 文本 >>'%s'<< 命中了关键词 -> '%s' "
+                "(动作:%s)\n",
+                text, best_keyword, CMD_TABLE[best_action].desc);
+
+        if (out_keyword && max_len > 0) {
+            strncpy(out_keyword, best_keyword, max_len - 1);
+            out_keyword[max_len - 1] = '\0';
+        }
+    }
+
+    return best_action;
 }
 
 int voice_ctl_execute(int action_id) {
@@ -290,11 +304,11 @@ int voice_ctl_execute(int action_id) {
         next_p += cmd->param_angle;
         break;  // 低头 (Pitch)
     case 4:
-        next_r += cmd->param_angle;
-        break;  // 左歪头 (Roll)
-    case 5:
         next_r -= cmd->param_angle;
-        break;  // 右歪头 (Roll)
+        break;  // 左歪头 (Roll: 负值 = 物理左倾)
+    case 5:
+        next_r += cmd->param_angle;
+        break;  // 右歪头 (Roll: 正值 = 物理右倾)
     case 6:
         next_body += cmd->param_angle;
         break;  // 身体左转
