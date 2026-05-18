@@ -24,9 +24,10 @@ typedef enum {
  * @brief 初始化 tracker 管理器
  * @param camera_id 相机 ID
  * @param motor_ctrl 异步电机控制器句柄 (用于切换控制权)
+ * @param motor_port 电机串口路径 (传递给子进程使用)
  * @return 0 成功, <0 失败
  */
-int tracker_manager_init(int camera_id, AsyncMotorController *motor_ctrl);
+int tracker_manager_init(int camera_id, AsyncMotorController *motor_ctrl, const char *motor_port);
 
 /**
  * @brief 启动指定类型的 tracker
