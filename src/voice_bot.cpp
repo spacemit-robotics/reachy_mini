@@ -113,28 +113,59 @@ static void daemon_cleanup() {
     }
 }
 
+static void kill_pid(pid_t pid) {
+    kill(pid, SIGTERM);
+    for (int i = 0; i < 50; ++i) {
+        usleep(100000);
+        if (kill(pid, 0) != 0) return;
+    }
+    kill(pid, SIGKILL);
+    usleep(200000);
+}
+
 static void do_stop() {
     pid_t pid = get_stored_pid();
+    bool stopped = false;
+
+    // 1. 通过 PID 文件终止
     if (pid > 0 && kill(pid, 0) == 0) {
-        kill(pid, SIGTERM);
-        // 等待进程退出 (最多 5 秒)
-        for (int i = 0; i < 50; ++i) {
-            usleep(100000);
-            if (kill(pid, 0) != 0) break;
-        }
-        if (kill(pid, 0) == 0) {
-            kill(pid, SIGKILL);
-            usleep(200000);
-        }
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
+        kill_pid(pid);
+        stopped = true;
         std::cout << "● reachy_voice_bot (PID: " << pid << ") 已停止" << std::endl;
-    } else {
-        std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
-        // 清理残留文件
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
     }
+
+    // 2. 通过进程名查找残留进程 (防止 PID 文件被覆盖后无法停止旧进程)
+    FILE *fp = popen("pidof reachy_voice_bot 2>/dev/null", "r");
+    if (fp) {
+        char buf[256] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            // pidof 返回空格分隔的 PID 列表
+            char *saveptr = NULL;
+            char *token = strtok_r(buf, " \n", &saveptr);
+            while (token) {
+                pid_t p = (pid_t)atoi(token);
+                if (p > 0 && p != getpid() && kill(p, 0) == 0) {
+                    kill_pid(p);
+                    if (!stopped) {
+                        std::cout << "● reachy_voice_bot (PID: " << p << ") 已停止" << std::endl;
+                    } else {
+                        std::cout << "● 清理残留进程 (PID: " << p << ")" << std::endl;
+                    }
+                    stopped = true;
+                }
+                token = strtok_r(NULL, " \n", &saveptr);
+            }
+        }
+        pclose(fp);
+    }
+
+    if (!stopped) {
+        std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
+    }
+
+    // 清理 PID/state 文件
+    unlink(PID_FILE);
+    unlink(STATE_FILE);
 }
 
 static void do_status() {
@@ -337,6 +368,7 @@ void listAudioDevices() {
 int main(int argc, char *argv[]) {
     // 提升 new_argv 作用域，防止守护进程模式下 argv 悬空指针
     std::vector<char *> new_argv;
+    bool is_daemon_child = false;  // 标记是否为 fork 出的守护子进程
 
     // -------------------------------------------------------------------------
     // 守护进程管理: start / stop / status
@@ -372,6 +404,7 @@ int main(int argc, char *argv[]) {
             }
             // 子进程：守护进程化
             setsid();
+            is_daemon_child = true;  // 标记为守护子进程，跳过后续互斥检查
             // 关闭 stdin，重定向 stdout/stderr 到日志文件
             freopen("/dev/null", "r", stdin);
             if (!freopen(LOG_FILE, "a", stdout)) {
@@ -394,6 +427,15 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, voiceSignalHandler);
     signal(SIGTERM, voiceSignalHandler);
+
+    // 互斥检查: 无论前台还是后台模式，若已有实例在运行则拒绝启动
+    // 注意: 守护子进程跳过此检查 (父进程 fork 前已验证过)
+    if (!is_daemon_child && is_daemon_running()) {
+        pid_t existing = get_stored_pid();
+        std::cerr << "● reachy_voice_bot 已在运行中 (PID: " << existing
+                    << ")，请先执行 stop 后再启动" << std::endl;
+        return 1;
+    }
 
     // 注册退出清理 (清理 PID/state 文件)
     atexit(daemon_cleanup);
