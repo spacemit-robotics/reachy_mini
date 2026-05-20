@@ -92,7 +92,7 @@ static int body_turn_right_wrap(struct motor_dev **devs, float angle) {
 // === 动作意图映射表 ===
 static const CommandMapping CMD_TABLE[] = {
     {0, {"向左转", "左转", "往左看", "看左边", NULL}, head_turn_left, 42.0f, "头部左转"},
-    {1, {"向右转", "右转", "往奏看", "看右边", NULL}, head_turn_right, 42.0f, "头部右转"},
+    {1, {"向右转", "右转", "往右看", "看右边", NULL}, head_turn_right, 42.0f, "头部右转"},
     {2, {"抬头", "向上看", "往上看", "看上面", NULL}, head_look_up, 35.0f, "抬头"},
     {3, {"低头", "向下看", "往下看", "看下面", NULL}, head_look_down, 35.0f, "低头"},
     {4, {"左歪头", "左偏头", NULL}, head_tilt_left, 25.0f, "左歪头"},

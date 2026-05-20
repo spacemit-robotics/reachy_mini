@@ -42,7 +42,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 TOOLS = [
     {
         "name": "head_turn_left",
-        "description": "Turn the robot's head to the left",
+        "description": "向左转头，看向左边。用于'看左边'、'向左看'、'左转头'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -56,7 +56,7 @@ TOOLS = [
     },
     {
         "name": "head_turn_right",
-        "description": "Turn the robot's head to the right",
+        "description": "向右转头，看向右边。用于'看右边'、'向右看'、'右转头'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -70,7 +70,7 @@ TOOLS = [
     },
     {
         "name": "head_look_up",
-        "description": "Tilt the robot's head upward",
+        "description": "抬头，向上看。用于'抬头'、'向上看'、'看上面'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -84,7 +84,7 @@ TOOLS = [
     },
     {
         "name": "head_look_down",
-        "description": "Tilt the robot's head downward",
+        "description": "低头，向下看。用于'低头'、'向下看'、'看下面'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -98,7 +98,7 @@ TOOLS = [
     },
     {
         "name": "head_tilt_left",
-        "description": "Tilt (roll) the robot's head to the left",
+        "description": "向左歪头。用于'左歪头'、'向左倾斜'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -112,7 +112,7 @@ TOOLS = [
     },
     {
         "name": "head_tilt_right",
-        "description": "Tilt (roll) the robot's head to the right",
+        "description": "向右歪头。用于'右歪头'、'向右倾斜'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -126,7 +126,7 @@ TOOLS = [
     },
     {
         "name": "body_turn_left",
-        "description": "Rotate the robot's body to the left",
+        "description": "身体向左转。用于'左转身'、'转向左边'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -140,7 +140,7 @@ TOOLS = [
     },
     {
         "name": "body_turn_right",
-        "description": "Rotate the robot's body to the right",
+        "description": "身体向右转。用于'右转身'、'转向右边'等指令",
         "inputSchema": {
             "type": "object",
             "properties": {

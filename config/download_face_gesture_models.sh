@@ -63,10 +63,8 @@ case "$LLM_MODEL_NAME" in
     LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
   glm-edge:1.5b|glm-edge-1.5b)
     LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
-  qwen3:30b|Qwen3-30B-A3B)
-    LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
-  *.gguf)
-    ;; # 已经是完整文件名
+
+    # 已经是完整文件名
 esac
 
 echo "[ModelSetup] LLM model selected: $LLM_MODEL_NAME"
@@ -108,25 +106,51 @@ download "$CACHE_BASE/yolov5-face" \
   "https://archive.spacemit.com/spacemit-ai/model_zoo/vision/yolov5-face/yolov5n-face_cut.q.onnx" \
   "yolov5n-face_cut.q.onnx"
 
-# LLM 模型 (仅下载所需模型)
+# LLM 模型下载 (仅下载本地 .gguf 模型，云端 API 模型跳过)
 LLM_CACHE="${HOME:-/tmp}/.cache/models/llm"
 LLM_BASE_URL="https://archive.spacemit.com/spacemit-ai/model_zoo/llm"
-download "$LLM_CACHE" "$LLM_BASE_URL/$LLM_MODEL_NAME" "$LLM_MODEL_NAME"
 
-echo ""
-echo "Done. Models downloaded:"
-echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
-echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
-echo "  $LLM_CACHE/$LLM_MODEL_NAME"
+# 检测是否为本地模型（.gguf 后缀）还是云端 API 模型
+case "$LLM_MODEL_NAME" in
+  *.gguf)
+    # 本地 GGUF 模型，执行下载
+    download "$LLM_CACHE" "$LLM_BASE_URL/$LLM_MODEL_NAME" "$LLM_MODEL_NAME"
+    echo ""
+    echo "Done. Models downloaded:"
+    echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
+    echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
+    echo "  $LLM_CACHE/$LLM_MODEL_NAME"
+    ;;
+  *)
+    # 云端 API 模型（如 gemini-embedding-001, gpt-4o-mini 等），跳过下载
+    echo ""
+    echo "Done. Models downloaded:"
+    echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
+    echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
+    echo "  [Skipped] Cloud API model: $LLM_MODEL_NAME (no local download needed)"
+    ;;
+esac
 
 # --------------------------------------------------------------------------
-# 启动 llama-server (仅在 --start-server 模式下)
+# 启动 llama-server (仅在 --start-server 模式下且为本地模型时)
 # --------------------------------------------------------------------------
 LLAMA_PID_FILE="/tmp/reachy_llama_server.pid"
 LLM_MODEL="$LLM_CACHE/$LLM_MODEL_NAME"
 LLAMA_PORT=8080
 
 if [ "$START_SERVER" -eq 1 ]; then
+  # 检查是否为云端 API 模型（不含 .gguf 后缀）
+  case "$LLM_MODEL_NAME" in
+    *.gguf)
+      # 本地模型，继续启动 llama-server
+      ;;
+    *)
+      # 云端 API 模型，跳过 llama-server 启动
+      echo "Using cloud API model: $LLM_MODEL_NAME (skip local llama-server)"
+      exit 0
+      ;;
+  esac
+
   # 检查是否已有 llama-server 在监听目标端口
   if [ -f "$LLAMA_PID_FILE" ]; then
     OLD_PID=$(cat "$LLAMA_PID_FILE" 2>/dev/null)
@@ -146,6 +170,20 @@ if [ "$START_SERVER" -eq 1 ]; then
     exit 1
   fi
 
+  # 内存预检: 模型文件大小 vs 可用内存 (需预留约 500MB 给系统)
+  MODEL_SIZE_KB=$(du -k "$LLM_MODEL" | awk '{print $1}')
+  AVAIL_MEM_KB=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{print $2}')
+  RESERVE_KB=524288  # 预留 512MB
+  if [ -n "$AVAIL_MEM_KB" ] && [ "$MODEL_SIZE_KB" -gt $((AVAIL_MEM_KB - RESERVE_KB)) ]; then
+    MODEL_SIZE_MB=$((MODEL_SIZE_KB / 1024))
+    AVAIL_MEM_MB=$((AVAIL_MEM_KB / 1024))
+    echo "ERROR: 内存不足，无法加载模型" >&2
+    echo "  模型大小: ${MODEL_SIZE_MB}MB" >&2
+    echo "  可用内存: ${AVAIL_MEM_MB}MB" >&2
+    echo "  请选择更小的模型，如 qwen2.5:0.5b 或 qwen2.5:1.5b" >&2
+    exit 1
+  fi
+
   echo "Starting llama-server on port $LLAMA_PORT ..."
   echo "  Model: $LLM_MODEL_NAME"
   llama-server -m "$LLM_MODEL" -t 4 --port "$LLAMA_PORT" \
@@ -155,8 +193,8 @@ if [ "$START_SERVER" -eq 1 ]; then
   echo "llama-server started (PID: $LLAMA_PID), log: /tmp/reachy_llama_server.log"
 
   # 等待服务就绪 (最多 30 秒)
-  echo -n "Waiting for llama-server to be ready"
-  for i in $(seq 1 60); do
+  printf "Waiting for llama-server to be ready"
+  for _ in $(seq 1 60); do
     if command -v curl >/dev/null 2>&1; then
       if curl -sf "http://127.0.0.1:$LLAMA_PORT/health" >/dev/null 2>&1; then
         echo " OK"
@@ -175,7 +213,7 @@ if [ "$START_SERVER" -eq 1 ]; then
       rm -f "$LLAMA_PID_FILE"
       exit 1
     fi
-    echo -n "."
+    printf "."
     sleep 0.5
   done
   echo " TIMEOUT (server may still be loading)"
