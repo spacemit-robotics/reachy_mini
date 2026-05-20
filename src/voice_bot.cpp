@@ -515,10 +515,24 @@ int main(int argc, char *argv[]) {
             if (access(model_script.c_str(), X_OK) == 0) {
                 std::cout << getTimestamp()
                     << " [ModelSetup] 检查模型并启动 LLM 服务...\n";
-                std::string cmd = model_script + " --start-server";
-                // 传递模型名称 (来自命令行 --model 或配置文件)
-                if (cfg.llm_model_set && !cfg.llm_model.empty()) {
-                    cmd += " --model " + cfg.llm_model;
+                bool is_local_llm = true;
+                if (!cfg.llm_url.empty()) {
+                    if (cfg.llm_url.find("127.0.0.1") == std::string::npos &&
+                        cfg.llm_url.find("localhost") == std::string::npos &&
+                        cfg.llm_url.find("0.0.0.0") == std::string::npos) {
+                        is_local_llm = false;
+                    }
+                }
+
+                std::string cmd = model_script;
+                if (is_local_llm) {
+                    cmd += " --start-server";
+                    // 传递模型名称 (来自命令行 --model 或配置文件)
+                    if (cfg.llm_model_set && !cfg.llm_model.empty()) {
+                        cmd += " --model " + cfg.llm_model;
+                    }
+                } else {
+                    std::cout << getTimestamp() << " [ModelSetup] 正在使用云端 LLM，仅下载视觉模型...\n";
                 }
                 // 传递配置文件路径，让脚本从中读取 llm.model
                 std::string cfg_for_script = cfg.config_path;
