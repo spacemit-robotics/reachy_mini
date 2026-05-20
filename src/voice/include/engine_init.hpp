@@ -33,6 +33,13 @@ struct LLMInitResult {
 LLMInitResult initLLM(const std::string &llm_model, const std::string &llm_url,
                     const std::string &default_system_prompt, int max_tokens);
 
+// LLM 预热：发送一个简短请求触发模型加载，消除首轮对话冷启动延迟
+// tools_json: 传入与实际对话相同的 tools schema
+// conversation_messages: 传入包含 system prompt 的对话历史，确保完整预热
+void warmupLLM(std::shared_ptr<spacemit_llm::LLMService> llm,
+                const std::string &tools_json = "",
+                const std::vector<spacemit_llm::ChatMessage> *conversation_messages = nullptr);
+
 std::shared_ptr<SpacemiT::VadEngine> initVAD(float vad_threshold);
 
 std::shared_ptr<SpacemiT::AsrEngine> initASR();
@@ -43,6 +50,9 @@ struct TTSInitResult {
 };
 
 TTSInitResult initTTS(const std::string &tts_type);
+
+// TTS 预热：合成一个短句触发模型加载，消除首次合成冷启动延迟
+void warmupTTS(std::shared_ptr<SpacemiT::TtsEngine> tts);
 
 #ifdef USE_MCP
 struct MCPInitResult {
