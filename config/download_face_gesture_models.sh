@@ -1,9 +1,76 @@
 #!/bin/sh
-# 下载 yolov5_gesture 和 yolov5-face 模型
-# 模型保存路径: ~/.cache/models/vision/yolov5/ 和 ~/.cache/models/vision/yolov5-face/
+# 下载模型 (视觉 + LLM) 并可选启动 llama-server
+# 模型保存路径: ~/.cache/models/vision/ 和 ~/.cache/models/llm/
+#
+# 用法:
+#   ./download_face_gesture_models.sh                          # 仅下载模型
+#   ./download_face_gesture_models.sh --start-server           # 下载模型并用默认模型启动
+#   ./download_face_gesture_models.sh --start-server --model qwen2.5-0.5b-instruct-q4_0.gguf
+#   ./download_face_gesture_models.sh --start-server --config /path/to/config_paras.yaml
 
 
 set -e
+
+START_SERVER=0
+LLM_MODEL_NAME=""
+CONFIG_FILE=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --start-server) START_SERVER=1; shift ;;
+    --model) LLM_MODEL_NAME="$2"; shift 2 ;;
+    --config) CONFIG_FILE="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# 从配置文件解析 llm.model (简易 YAML 解析，仅在未通过 --model 指定时生效)
+if [ -z "$LLM_MODEL_NAME" ] && [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+  # 提取 llm.model 字段值，如 "qwen2.5:0.5b"
+  CFG_MODEL=$(grep -A5 '^llm:' "$CONFIG_FILE" | grep '^\s*model:' | head -1 \
+    | sed 's/.*model:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
+  if [ -n "$CFG_MODEL" ]; then
+    # 将 llm.model 格式 (如 "qwen2.5:0.5b") 映射为 gguf 文件名
+    case "$CFG_MODEL" in
+      qwen2.5:0.5b|qwen2.5-0.5b*)
+        LLM_MODEL_NAME="qwen2.5-0.5b-instruct-q4_0.gguf" ;;
+      qwen2.5:1.5b|qwen2.5-1.5b*)
+        LLM_MODEL_NAME="qwen2.5-1.5b-instruct-q4_0.gguf" ;;
+      qwen2.5:3b|qwen2.5-3b*)
+        LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
+      glm-edge:1.5b|glm-edge-1.5b*)
+        LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
+      qwen3:30b*|Qwen3-30B*)
+        LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
+      *.gguf)
+        LLM_MODEL_NAME="$CFG_MODEL" ;;
+    esac
+  fi
+fi
+
+# 默认模型
+if [ -z "$LLM_MODEL_NAME" ]; then
+  LLM_MODEL_NAME="qwen2.5-0.5b-instruct-q4_0.gguf"
+fi
+
+# 将简短模型名映射为 gguf 文件名 (支持 CLI --model 传入简写)
+case "$LLM_MODEL_NAME" in
+  qwen2.5:0.5b|qwen2.5-0.5b)
+    LLM_MODEL_NAME="qwen2.5-0.5b-instruct-q4_0.gguf" ;;
+  qwen2.5:1.5b|qwen2.5-1.5b)
+    LLM_MODEL_NAME="qwen2.5-1.5b-instruct-q4_0.gguf" ;;
+  qwen2.5:3b|qwen2.5-3b)
+    LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
+  glm-edge:1.5b|glm-edge-1.5b)
+    LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
+  qwen3:30b|Qwen3-30B-A3B)
+    LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
+  *.gguf)
+    ;; # 已经是完整文件名
+esac
+
+echo "[ModelSetup] LLM model selected: $LLM_MODEL_NAME"
+
 CACHE_BASE="${HOME:-/tmp}/.cache/models/vision"
 
 download() {
@@ -41,8 +108,76 @@ download "$CACHE_BASE/yolov5-face" \
   "https://archive.spacemit.com/spacemit-ai/model_zoo/vision/yolov5-face/yolov5n-face_cut.q.onnx" \
   "yolov5n-face_cut.q.onnx"
 
+# LLM 模型 (仅下载所需模型)
+LLM_CACHE="${HOME:-/tmp}/.cache/models/llm"
+LLM_BASE_URL="https://archive.spacemit.com/spacemit-ai/model_zoo/llm"
+download "$LLM_CACHE" "$LLM_BASE_URL/$LLM_MODEL_NAME" "$LLM_MODEL_NAME"
+
 echo ""
 echo "Done. Models downloaded:"
 echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
 echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
+echo "  $LLM_CACHE/$LLM_MODEL_NAME"
+
+# --------------------------------------------------------------------------
+# 启动 llama-server (仅在 --start-server 模式下)
+# --------------------------------------------------------------------------
+LLAMA_PID_FILE="/tmp/reachy_llama_server.pid"
+LLM_MODEL="$LLM_CACHE/$LLM_MODEL_NAME"
+LLAMA_PORT=8080
+
+if [ "$START_SERVER" -eq 1 ]; then
+  # 检查是否已有 llama-server 在监听目标端口
+  if [ -f "$LLAMA_PID_FILE" ]; then
+    OLD_PID=$(cat "$LLAMA_PID_FILE" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+      echo "llama-server already running (PID: $OLD_PID), skip."
+      exit 0
+    fi
+  fi
+
+  if ! command -v llama-server >/dev/null 2>&1; then
+    echo "WARNING: llama-server not found in PATH, skip starting LLM service." >&2
+    exit 0
+  fi
+
+  if [ ! -f "$LLM_MODEL" ]; then
+    echo "ERROR: LLM model not found: $LLM_MODEL" >&2
+    exit 1
+  fi
+
+  echo "Starting llama-server on port $LLAMA_PORT ..."
+  echo "  Model: $LLM_MODEL_NAME"
+  llama-server -m "$LLM_MODEL" -t 4 --port "$LLAMA_PORT" \
+    > /tmp/reachy_llama_server.log 2>&1 &
+  LLAMA_PID=$!
+  echo "$LLAMA_PID" > "$LLAMA_PID_FILE"
+  echo "llama-server started (PID: $LLAMA_PID), log: /tmp/reachy_llama_server.log"
+
+  # 等待服务就绪 (最多 30 秒)
+  echo -n "Waiting for llama-server to be ready"
+  for i in $(seq 1 60); do
+    if command -v curl >/dev/null 2>&1; then
+      if curl -sf "http://127.0.0.1:$LLAMA_PORT/health" >/dev/null 2>&1; then
+        echo " OK"
+        exit 0
+      fi
+    else
+      if wget -q -O /dev/null "http://127.0.0.1:$LLAMA_PORT/health" 2>/dev/null; then
+        echo " OK"
+        exit 0
+      fi
+    fi
+    # 检查进程是否还活着
+    if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
+      echo " FAILED"
+      echo "ERROR: llama-server exited unexpectedly, check /tmp/reachy_llama_server.log" >&2
+      rm -f "$LLAMA_PID_FILE"
+      exit 1
+    fi
+    echo -n "."
+    sleep 0.5
+  done
+  echo " TIMEOUT (server may still be loading)"
+fi
 
