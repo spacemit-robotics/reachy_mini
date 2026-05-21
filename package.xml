@@ -11,6 +11,7 @@
   <depend>vad</depend>
   <depend>llm</depend>
   <depend>mcp</depend>
+  <system_depend>opencv-spacemit</system_depend>
   <system_depend check="pkg-config --exists portaudio-2.0">portaudio19-dev</system_depend>
   <system_depend check="pkg-config --exists sndfile">libsndfile1-dev</system_depend>
   <system_depend check="pkg-config --exists samplerate">libsamplerate0-dev</system_depend>

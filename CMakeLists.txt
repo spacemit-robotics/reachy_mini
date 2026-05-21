@@ -7,6 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 禁用特定编译警告 (针对第三方库头文件)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-missing-template-keyword")
+
 # 启用全局 PIC 解决开发板重定位逻辑 (必须在定义 target 前设置)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -18,7 +21,7 @@ set(STAGING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../output/staging")
 # ============================================================================
 # 依赖组件导入 — 通过 CMake config 导入（由构建系统 package.xml 保证先编译）
 # ============================================================================
-find_package(motor REQUIRED HINTS ${STAGING_DIR}/lib/cmake/motor)
+find_package(motor QUIET HINTS ${STAGING_DIR}/lib/cmake/motor)
 # NOTE: find_package(Components) 已移除 — 所有组件通过下方 ensure_component_built() 导入
 # 如果遇到 ComponentsConfig.cmake parse error，请删除损坏的文件:
 #   rm -f output/staging/lib/cmake/Components/ComponentsConfig.cmake
@@ -41,6 +44,7 @@ function(ensure_component_built _name _rel_path)
     endforeach()
 
     if(NOT TARGET components::${_name})
+        file(MAKE_DIRECTORY "${STAGING_DIR}/include")
         add_library(components::${_name} UNKNOWN IMPORTED)
         set_target_properties(components::${_name} PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${STAGING_DIR}/include"
@@ -59,7 +63,7 @@ function(ensure_component_built _name _rel_path)
             
             add_custom_command(
                 OUTPUT "${_primary_lib}"
-                COMMAND ${CMAKE_COMMAND} -S "${_src_dir}" -B "${_build_dir}" -DCMAKE_INSTALL_PREFIX="${STAGING_DIR}"
+                COMMAND ${CMAKE_COMMAND} -S "${_src_dir}" -B "${_build_dir}" -DCMAKE_INSTALL_PREFIX="${STAGING_DIR}" "-DCMAKE_C_FLAGS=-w" "-DCMAKE_CXX_FLAGS=-w -Wno-missing-template-keyword"
                 COMMAND ${CMAKE_COMMAND} --build "${_build_dir}" --target install -j4
                 COMMENT "Auto-building missing component: ${_name}"
             )
@@ -72,6 +76,8 @@ function(ensure_component_built _name _rel_path)
 endfunction()
 
 # 始终确保组件目标存在（无论 ComponentsConfig.cmake 是否被找到）
+# motor
+ensure_component_built(motor peripherals/motor libmotor.a)
 # vision
 ensure_component_built(vision model_zoo/vision libvision.so)
 # audio (支持 libspacemit_audio.a 或 libspace_audio.a)
@@ -81,7 +87,7 @@ ensure_component_built(audio_resampler multimedia/audio libaudio_resampler.a)
 ensure_component_built(stt model_zoo/asr libstt.a)
 ensure_component_built(sensevoice model_zoo/asr libsensevoice.a)
 ensure_component_built(zipformer model_zoo/asr libzipformer.a)
-ensure_component_built(kaldi-native-fbank-core model_zoo/asr libkaldi-native-fbank-core.so libkaldi-native-fbank-core.a)
+ensure_component_built(kaldi-native-fbank-core model_zoo/asr libkaldi-native-fbank-core.a)
 # tts
 ensure_component_built(tts model_zoo/tts libtts.a)
 ensure_component_built(kaldifst_core model_zoo/tts libkaldifst_core.a)
@@ -103,8 +109,10 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs highgui videoio)
 # ============================================================================
 # 公共包含目录 & 库目录
 # ============================================================================
-include_directories(
+include_directories(SYSTEM
     ${STAGING_DIR}/include
+)
+include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/kinematics/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/motor_ctl
@@ -128,14 +136,29 @@ set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib")
 # ============================================================================
 # 公共 motor 链接库列表（通过 find_package 导入，传递依赖自动继承）
 # ============================================================================
+find_library(ETHERCAT_LIBRARY NAMES ethercat libethercat.so.1)
+
 set(MOTOR_LIBS
     -Wl,--whole-archive
-    motor::motor
+    components::motor
     -Wl,--no-whole-archive
+    m stdc++ pthread dl rt
+    gpiod
 )
+if(ETHERCAT_LIBRARY)
+    list(APPEND MOTOR_LIBS ${ETHERCAT_LIBRARY})
+else()
+    list(APPEND MOTOR_LIBS ethercat)
+endif()
+
+# 如果 motor_config 没找到，我们手动设置 MOTOR_RUST_LIB 为预期的安装路径
+if(NOT MOTOR_RUST_LIB)
+    set(MOTOR_RUST_LIB "${STAGING_DIR}/lib/libreachy_mini_motor_controller.a")
+endif()
 
 # Rust 伴生库（如果 motor 构建时启用了 drv_uart_rm）
 if(MOTOR_RUST_LIB AND NOT "${MOTOR_RUST_LIB}" STREQUAL "")
+    # 由 ensure_component_built(motor) 统一负责编译，避免多进程同时 cmake 产生冲突
     list(APPEND MOTOR_LIBS ${MOTOR_RUST_LIB})
 endif()
 
@@ -289,6 +312,7 @@ if(BUILD_VOICE_BOT)
     set(OMNI_AGENT_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../omni_agent")
 
     # onnxruntime and curl are system libs (not auto-built)
+    # onnxruntime / spacemit_ep 由上层构建系统编译安装，此处仅尝试查找，缺失时不报错
     find_library(ONNXRUNTIME_LIB NAMES onnxruntime)
     find_library(SPACEMIT_EP_LIB NAMES spacemit_ep)
     find_package(CURL REQUIRED)
@@ -332,6 +356,8 @@ if(BUILD_VOICE_BOT)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/voice/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio
+    )
+    target_include_directories(reachy_voice_bot SYSTEM PRIVATE
         ${SAMPLERATE_INCLUDE_DIRS}
         ${STAGING_DIR}/include/tts
     )
@@ -365,13 +391,13 @@ if(BUILD_VOICE_BOT)
         components::vision
         ${OpenCV_LIBS}
         # 系统库
-        ${ONNXRUNTIME_LIB}
-        ${SPACEMIT_EP_LIB}
         ${CURL_LIBRARIES}
         ${SNDFILE_LIBRARIES}
         ${FFTW3_LIBRARIES}
         ${ALSA_LIBRARIES}
         ${PORTAUDIO_LIBRARIES}
+        -lonnxruntime
+        -lspacemit_ep
         -ludev
     )
 
