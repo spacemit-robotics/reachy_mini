@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
     uint8_t motor_ids[MOTOR_COUNT] = {10, 11, 12, 13, 14, 15, 16, 17, 18};
     for (int i = 0; i < MOTOR_COUNT; i++) {
         uint8_t id = motor_ids[i];
-        devs[i] = motor_alloc_uart("drv_uart_rm", port, BAUDRATE, id, NULL);
+        devs[i] = motor_alloc_uart("drv_uart_xl330", port, BAUDRATE, id, NULL);
         if (!devs[i]) {
             fprintf(stderr, "错误: 无法分配电机 ID %d\n", id);
             motor_free(devs, i);

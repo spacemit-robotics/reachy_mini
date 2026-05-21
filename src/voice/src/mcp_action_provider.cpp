@@ -39,27 +39,81 @@ void MCPActionProvider::initTools() {
         {"properties",
         {{"angle", {{"type", "number"}, {"description", "角度 (度)"}, {"default", 15}}}}}};
 
-    // 注册所有动作工具
-    add_tool("head_turn_left", "控制机器人头部向左转动", 0, angle_schema);
-    add_tool("head_turn_right", "控制机器人头部向右转动", 1, angle_schema);
-    add_tool("head_look_up", "控制机器人头部向上仰", 2, angle_schema);
-    add_tool("head_look_down", "控制机器人头部向下俯", 3, angle_schema);
-    add_tool("head_tilt_left", "控制机器人头部向左侧倾斜 (Roll)", 4, angle_schema);
-    add_tool("head_tilt_right", "控制机器人头部向右侧倾斜 (Roll)", 5, angle_schema);
-    add_tool("body_turn_left", "控制机器人身体向左转动", 6, angle_schema);
-    add_tool("body_turn_right", "控制机器人身体向右转动", 7, angle_schema);
-    add_tool("reset_pose", "将机器人复位到初始中性姿态", 8);
+    // ========================================================================
+    // 头部水平转动（左右看）- 用于"看左边"、"看右边"、"向左看"等
+    // ========================================================================
+    add_tool("head_turn_left",
+            "头部向左转，看向左边。触发词：看左边、向左看、左转头、往左看",
+            0, angle_schema);
+    add_tool("head_turn_right",
+            "头部向右转，看向右边。触发词：看右边、向右看、右转头、往右看",
+            1, angle_schema);
 
+    // ========================================================================
+    // 头部垂直俯仰（上下看）- 用于"抬头"、"低头"、"看上面"等
+    // ========================================================================
+    add_tool("head_look_up",
+            "抬头，向上看。触发词：抬头、向上看、看上面、仰头",
+            2, angle_schema);
+    add_tool("head_look_down",
+            "低头，向下看。触发词：低头、向下看、看下面、俯头",
+            3, angle_schema);
+
+    // ========================================================================
+    // 头部侧倾（歪头）- 用于"歪头"、"侧头"等
+    // ========================================================================
+    add_tool("head_tilt_left",
+            "向左歪头，头部向左侧倾斜。触发词：左歪头、向左歪、左侧头",
+            4, angle_schema);
+    add_tool("head_tilt_right",
+            "向右歪头，头部向右侧倾斜。触发词：右歪头、向右歪、右侧头",
+            5, angle_schema);
+
+    // ========================================================================
+    // 身体转动
+    // ========================================================================
+    add_tool("body_turn_left",
+            "身体向左转。触发词：左转身、身体向左转",
+            6, angle_schema);
+    add_tool("body_turn_right",
+            "身体向右转。触发词：右转身、身体向右转",
+            7, angle_schema);
+
+    // ========================================================================
+    // 复位
+    // ========================================================================
+    add_tool("reset_pose",
+            "复位到初始姿态。触发词：复位、回正、归位",
+            8);
+
+    // ========================================================================
     // 舞蹈动作
-    add_tool("dance_headbanger", "执行摇滚风格的点头动作", 9);
-    add_tool("dance_jackson", "执行迈克尔·杰克逊风格的舞蹈动作", 10);
-    add_tool("dance_chicken", "执行小鸡啄米风格的舞蹈动作", 11);
-    add_tool("dance_uh_huh_tilt", "执行点赞/附和风格的倾斜动作", 12);
+    // ========================================================================
+    add_tool("dance_headbanger",
+            "跳摇滚舞，摇头晃脑。触发词：摇滚舞、headbanger",
+            9);
+    add_tool("dance_jackson",
+            "跳杰克逊舞。触发词：杰克逊舞、jackson",
+            10);
+    add_tool("dance_chicken",
+            "跳小鸡舞。触发词：小鸡舞、chicken",
+            11);
+    add_tool("dance_uh_huh_tilt",
+            "点头附和。触发词：点头、uh huh",
+            12);
 
+    // ========================================================================
     // 视觉跟踪
-    add_tool("face_follow_start", "启动人脸跟随模式，机器人会自动跟踪用户的脸转动头部", 13);
-    add_tool("gesture_follow_start", "启动手势跟随模式，机器人会自动跟踪用户的手部动作", 15);
-    add_tool("tracker_stop", "停止当前任何正在运行的视觉跟随模式 (如人脸或手势)，恢复正常语音控制", 14);
+    // ========================================================================
+    add_tool("face_follow_start",
+            "启动人脸跟随。触发词：跟着我、看着我、人脸跟随",
+            13);
+    add_tool("gesture_follow_start",
+            "启动手势跟随。触发词：跟着手、手势跟随",
+            15);
+    add_tool("tracker_stop",
+            "停止跟随。触发词：别跟了、停止跟随、不要跟了",
+            14);
 }
 
 const std::vector<mcp::Tool> &MCPActionProvider::getTools() const {
@@ -84,11 +138,11 @@ bool MCPActionProvider::executeTool(const std::string &name, const mcp::json & /
             pending_dance_->action_id.store(action_id);
             std::cout << getTimestamp() << " [ActionProvider] 舞蹈动作已标记为待处理 (ID: "
                     << action_id << ")，将由主线程执行\n";
-            out_result = "舞蹈动作已准备就绪，正在执行。";
+            out_result = "OK";
         } else {
             std::cerr << getTimestamp()
                     << " [ActionProvider] 错误: pending_dance 未设置，无法执行舞蹈\n";
-            out_result = "舞蹈系统未就绪，无法执行。";
+            out_result = "执行失败，舞蹈系统未就绪。";
         }
         return true;
     }
@@ -96,11 +150,11 @@ bool MCPActionProvider::executeTool(const std::string &name, const mcp::json & /
     // 非舞蹈动作直接执行
     int res = voice_ctl_execute(action_id);
     if (res == ACTION_LIMIT_EXCEEDED) {
-        out_result = "动作已到达极限位置，无法继续执行。请直接用语言回复用户，不要再调用工具。";
+        out_result = "已到达极限位置，无法继续。";
     } else if (res < 0) {
-        out_result = "电机控制器异常，执行失败。请直接用语言回复用户。";
+        out_result = "执行失败，电机异常。";
     } else {
-        out_result = "动作已成功执行完毕。请直接用简短的语言回复用户，不要重复调用同一个工具。";
+        out_result = "OK";
     }
 
     return true;

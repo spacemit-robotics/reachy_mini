@@ -25,6 +25,7 @@ static struct motor_dev *g_devs[9];
 static AsyncMotorController *g_async_motor_ctrl = NULL;
 static bool g_initialized = false;
 static int g_camera_id = 0;  // 跟踪相机 ID
+static const char *g_serial_port = "/dev/ttyACM0";  // 电机串口路径
 
 // 累计目标角度状态缓存 (用于增量步进与限位控制)
 static float g_target_r = 0.0f;
@@ -91,11 +92,11 @@ static int body_turn_right_wrap(struct motor_dev **devs, float angle) {
 // === 动作意图映射表 ===
 static const CommandMapping CMD_TABLE[] = {
     {0, {"向左转", "左转", "往左看", "看左边", NULL}, head_turn_left, 42.0f, "头部左转"},
-    {1, {"向右转", "右转", "往奏看", "看右边", NULL}, head_turn_right, 42.0f, "头部右转"},
+    {1, {"向右转", "右转", "往右看", "看右边", NULL}, head_turn_right, 42.0f, "头部右转"},
     {2, {"抬头", "向上看", "往上看", "看上面", NULL}, head_look_up, 35.0f, "抬头"},
     {3, {"低头", "向下看", "往下看", "看下面", NULL}, head_look_down, 35.0f, "低头"},
-    {4, {"左歪头", "歪头", NULL}, head_tilt_left, 25.0f, "左歪头"},
-    {5, {"右歪头", NULL}, head_tilt_right, 25.0f, "右歪头"},
+    {4, {"左歪头", "左偏头", NULL}, head_tilt_left, 25.0f, "左歪头"},
+    {5, {"右歪头", "右偏头", NULL}, head_tilt_right, 25.0f, "右歪头"},
     {6, {"身体左转", "转身向左", NULL}, body_turn_left, 42.0f, "身体左转"},
     {7, {"身体右转", "转身向右", NULL}, body_turn_right, 42.0f, "身体右转"},
     {8, {"回正", "回中", "复位", "正前方", NULL}, center_all_wrap, 0.0f, "全身回中"},
@@ -148,9 +149,8 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
         return -1;
     }
 
-    // 3. 按照官方高度成功的 gesture_tracker 逻辑：
-    // 在启动时不进行物理位姿同步，强制信任零位，这能有效防止因电机未校准引起的“剧烈补偿”。
-    // 默认所有目标均为 0
+    // 3. 无条件信任零位，不读取实际位姿，直接以低速向初始位姿(0,0,0)运动
+    //    硬件 Profile Velocity 保证电机不会瞬间跳变
     g_target_r = 0.0f;
     g_target_p = 0.0f;
     g_target_y = 0.0f;
@@ -158,24 +158,41 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     g_target_ant_r = 0.0f;
     g_target_ant_l = 0.0f;
 
-    // 4. 关键点：初始化动作速度设为 20, 启动控制循环
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 20.0f);
+    // 4. 设置初始化限速 (20°/s) 并启动控制循环，缓慢归零
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 50.0f);
     if (!async_motor_controller_start(g_async_motor_ctrl)) {
         printf("[VoiceCtl] 错误: AsyncWorker 线程启动失败\n");
         return -1;
     }
 
-    // 给机器人 1.5 秒时间以平稳速度 (20deg/s) 缓慢重对齐到位，避免启动冲撞
+    // 给机器人 1.5 秒时间缓慢归位
     usleep(1500000);
 
-    // 5. 初始化完成后，将常规动作速度提高到 50
-    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 50.0f);
+    // 5. 初始化完成后，清空硬件 Profile Velocity 寄存器 (写 0 = 不限速)
+    //    恢复到写入前的状态，后续动作由电机以最大速度执行
+    {
+        uint16_t reg_addr = 112;  // Profile Velocity register
+        uint32_t vel_zero = 0;    // 0 = unlimited speed
+        for (int i = 0; i < 9; i++) {
+            if (g_devs[i]) {
+                motor_set_paras(g_devs[i], &reg_addr, &vel_zero, 4);
+            }
+        }
+    }
+    // 禁用后续命令的硬件速度写入
+    motion_set_vel_limit(0.0f);
+    // 软件插值不限速 (设一个足够大的值，实际由电机硬件速度决定)
+    // 注意: 传 0 会导致 step=0，电机无法移动；需传一个足够大的值
+    async_motor_controller_set_speed_limit(g_async_motor_ctrl, 200.0f);
+
+    // 保存串口路径供 tracker 子进程使用
+    g_serial_port = serial_port ? serial_port : "/dev/ttyACM0";
 
     // 6. 初始化 TrackerManager
-    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl, g_serial_port);
 
     g_initialized = true;
-    printf("[VoiceCtl] 动作控制模块准备就绪 (运行速度: 50deg/s)\n");
+    printf("[VoiceCtl] 动作控制模块准备就绪 (常规动作不限速)\n");
 
     return 0;
 }
@@ -211,7 +228,7 @@ AsyncMotorController *voice_ctl_get_controller(void) {
 
 void voice_ctl_set_camera_id(int camera_id) {
     g_camera_id = camera_id;
-    tracker_manager_init(g_camera_id, g_async_motor_ctrl);
+    tracker_manager_init(g_camera_id, g_async_motor_ctrl, g_serial_port);
     printf("[VoiceCtl] 跟踪相机 ID 设置为: %d\n", g_camera_id);
 }
 
@@ -223,25 +240,38 @@ int voice_ctl_match(const char *text, char *out_keyword, size_t max_len) {
     if (!text || strlen(text) == 0)
         return ACTION_NONE;
 
-    // 模糊匹配: 遍历表中的同义词数组
+    // 最长关键词优先匹配: 遍历所有条目的所有关键词，选择匹配到的最长关键词
+    // 避免短关键词（如"歪头"）抢先匹配包含更长关键词（如"右歪头"）的文本
+    int best_action = ACTION_NONE;
+    const char *best_keyword = NULL;
+    size_t best_len = 0;
+
     for (int i = 0; i < CMD_TABLE_SIZE; i++) {
         for (int j = 0; CMD_TABLE[i].keywords[j] != NULL; j++) {
-            if (strstr(text, CMD_TABLE[i].keywords[j]) != NULL) {
-                printf("[VoiceCtl] [匹配命中] 文本 >>'%s'<< 命中了关键词 -> '%s' "
-                        "(动作:%s)\n",
-                        text, CMD_TABLE[i].keywords[j], CMD_TABLE[i].desc);
-
-                // 如果提供了输出缓冲区，则复制匹配到的关键词
-                if (out_keyword && max_len > 0) {
-                    strncpy(out_keyword, CMD_TABLE[i].keywords[j], max_len - 1);
-                    out_keyword[max_len - 1] = '\0';
+            const char *kw = CMD_TABLE[i].keywords[j];
+            if (strstr(text, kw) != NULL) {
+                size_t kw_len = strlen(kw);
+                if (kw_len > best_len) {
+                    best_len = kw_len;
+                    best_action = CMD_TABLE[i].action_id;
+                    best_keyword = kw;
                 }
-
-                return CMD_TABLE[i].action_id;
             }
         }
     }
-    return ACTION_NONE;
+
+    if (best_action != ACTION_NONE && best_keyword) {
+        printf("[VoiceCtl] [匹配命中] 文本 >>'%s'<< 命中了关键词 -> '%s' "
+                "(动作:%s)\n",
+                text, best_keyword, CMD_TABLE[best_action].desc);
+
+        if (out_keyword && max_len > 0) {
+            strncpy(out_keyword, best_keyword, max_len - 1);
+            out_keyword[max_len - 1] = '\0';
+        }
+    }
+
+    return best_action;
 }
 
 int voice_ctl_execute(int action_id) {
@@ -278,11 +308,11 @@ int voice_ctl_execute(int action_id) {
         next_p += cmd->param_angle;
         break;  // 低头 (Pitch)
     case 4:
-        next_r += cmd->param_angle;
-        break;  // 左歪头 (Roll)
-    case 5:
         next_r -= cmd->param_angle;
-        break;  // 右歪头 (Roll)
+        break;  // 左歪头 (Roll: 负值 = 物理左倾)
+    case 5:
+        next_r += cmd->param_angle;
+        break;  // 右歪头 (Roll: 正值 = 物理右倾)
     case 6:
         next_body += cmd->param_angle;
         break;  // 身体左转

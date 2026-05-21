@@ -54,6 +54,13 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
         if (sentence.empty() || g_barge_in || !g_running)
             return;
 
+        // NPU 围栏: tracker 运行期间跳过 TTS (避免 TCM 资源冲突)
+        if (voice_ctl_tracker_any_running()) {
+            std::cout << getTimestamp()
+                << " [TTS] 跳过合成: tracker 正在运行，避免 TCM 冲突\n";
+            return;
+        }
+
         sentence_count++;
         auto result = ctx.tts->Call(sentence);
         if (result && result->IsSuccess() && !g_barge_in) {
@@ -176,24 +183,33 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                         if (tryLocalToolCall(ctx, tool_name, tool_args, result_text)) {
                             std::cout << getTimestamp() << " [LocalTool] 本地执行: " << tool_name
                                 << " -> " << result_text << "\n";
+                            // 本地动作执行成功后，不再进入下一轮 LLM 调用
+                            // 避免小模型在缺乏上下文时生成无意义回复（如"抱歉，我没听懂"）
+                            round = MAX_TOOL_ROUNDS;
                         } else {
-                            // 走网络 MCP 调用
+                            // 走网络 MCP 调用前先验证工具是否存在
                             std::string server = ctx.mcp_manager->findServerForTool(tool_name);
-                            std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
-                                << server << " 参数: " << tool_args.dump() << std::endl;
-
-                            auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
-
-                            if (tool_result.success && !tool_result.contents.empty()) {
-                                result_text = tool_result.contents[0];
-                            } else if (!tool_result.error.empty()) {
-                                result_text = "错误: " + tool_result.error;
+                            if (server.empty()) {
+                                // 工具不存在，返回错误信息
+                                result_text = "错误: 工具 '" + tool_name + "' 不存在，请检查工具名称";
+                                std::cout << getTimestamp() << " [MCP] 工具不存在: " << tool_name << "\n";
                             } else {
-                                result_text = tool_result.rawResult.dump();
-                            }
+                                std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
+                                    << server << " 参数: " << tool_args.dump() << std::endl;
 
-                            std::cout << getTimestamp() << " [MCP] 结果: " << result_text
-                                << std::endl;
+                                auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
+
+                                if (tool_result.success && !tool_result.contents.empty()) {
+                                    result_text = tool_result.contents[0];
+                                } else if (!tool_result.error.empty()) {
+                                    result_text = "错误: " + tool_result.error;
+                                } else {
+                                    result_text = tool_result.rawResult.dump();
+                                }
+
+                                std::cout << getTimestamp() << " [MCP] 结果: " << result_text
+                                    << std::endl;
+                            }
                         }
 
                         std::string tc_id = tc.value("id", "");
@@ -208,18 +224,25 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                                 << std::endl;
                 }
 
-                full_response.clear();
-                text_buffer.clear();
-                continue;
+                // NPU 围栏: 工具调用启动了 tracker 后，跳出循环不再生成文本
+                if (voice_ctl_tracker_any_running()) {
+                    std::cout << getTimestamp()
+                        << " [MCP] Tracker 已启动，跳过后续 LLM 轮次以避免 TCM 冲突\n";
+                    full_response.clear();
+                    text_buffer.clear();
+                break;
             }
 
-            {
-                std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
-                ctx.conversation_messages->push_back(
-                    spacemit_llm::ChatMessage::Assistant(result.content));
-            }
+            full_response.clear();
+            text_buffer.clear();
+            continue;
+        }
 
-            if (!g_barge_in) {
+        {
+            std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
+            ctx.conversation_messages->push_back(
+                spacemit_llm::ChatMessage::Assistant(result.content));
+        }            if (!g_barge_in) {
                 std::string remaining = text_buffer.getNextSentence();
                 if (!remaining.empty()) {
                     synthesizeSentence(remaining);
@@ -231,6 +254,17 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
             }
             break;
         }
+
+        // LLM 兜底逻辑已禁用：
+        // - 用户指令的动作匹配已在 voice_bot.cpp 中通过 voice_ctl_match(text) 完成
+        // - LLM 回答中出现"跟随"、"跳舞"等词不应触发动作
+        // - 避免 LLM 描述自身能力时误触发工具调用
+        // 原代码保留注释供参考：
+        // if (!full_response.empty() && !g_barge_in) {
+        //     char matched_kw[64] = {0};
+        //     int fallback_action = voice_ctl_match(full_response.c_str(), ...);
+        //     ...
+        // }
 
         // 对话历史滑动窗口：保留最近 8 条消息（不含 system message）
         {

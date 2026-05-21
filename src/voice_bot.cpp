@@ -66,9 +66,14 @@
 // 守护进程管理 (start / stop / status)
 // ============================================================================
 
+// 每次 start 启动守护进程时，检查 /tmp/reachy_voice_bot.log 是否超过 2MB
+// 超过则 rename 为 .log.old（覆盖上一份旧日志），然后以 "a" 模式打开新的空日志文件
 static const char PID_FILE[] = "/tmp/reachy_voice_bot.pid";
 static const char STATE_FILE[] = "/tmp/reachy_voice_bot.state";
 static const char LOG_FILE[] = "/tmp/reachy_voice_bot.log";
+static const char LOG_FILE_OLD[] = "/tmp/reachy_voice_bot.log.old";
+static const char LLAMA_PID_FILE[] = "/tmp/reachy_llama_server.pid";
+static const size_t LOG_MAX_SIZE = 2 * 1024 * 1024;  // 2MB 日志上限
 
 static pid_t get_stored_pid() {
     std::ifstream f(PID_FILE);
@@ -104,40 +109,96 @@ static void update_mode_state(int action) {
     else if (action == 14 || action == 16) write_state("对话模式");
 }
 
+static void kill_pid(pid_t pid) {
+    kill(pid, SIGTERM);
+    for (int i = 0; i < 50; ++i) {
+        usleep(100000);
+        if (kill(pid, 0) != 0) return;
+    }
+    kill(pid, SIGKILL);
+    usleep(200000);
+}
+
+// 终止由本程序启动的 llama-server 进程
+static void stop_llama_server() {
+    std::ifstream f(LLAMA_PID_FILE);
+    if (!f.is_open()) return;
+    pid_t pid = 0;
+    f >> pid;
+    f.close();
+    if (pid > 0 && kill(pid, 0) == 0) {
+        std::cout << getTimestamp()
+            << " [LLM] 终止 llama-server (PID: " << pid << ")\n";
+        kill_pid(pid);
+    }
+    unlink(LLAMA_PID_FILE);
+}
+
 static void daemon_cleanup() {
     // 仅清理属于当前进程的 PID 文件
     pid_t stored = get_stored_pid();
     if (stored == getpid()) {
         unlink(PID_FILE);
         unlink(STATE_FILE);
+        // 同步终止由本进程启动的 llama-server
+        stop_llama_server();
+    }
+}
+
+// 日志轮转: 若日志超过上限则重命名为 .old，保留一份历史
+static void rotate_log() {
+    struct stat st;
+    if (stat(LOG_FILE, &st) == 0 && static_cast<size_t>(st.st_size) > LOG_MAX_SIZE) {
+        rename(LOG_FILE, LOG_FILE_OLD);
     }
 }
 
 static void do_stop() {
     pid_t pid = get_stored_pid();
-    if (pid > 0 && kill(pid, 0) == 0) {
-        kill(pid, SIGTERM);
-        // 等待进程退出 (最多 5 秒)
-        for (int i = 0; i < 50; ++i) {
-            usleep(100000);
-            if (kill(pid, 0) != 0) break;
-        }
-        if (kill(pid, 0) == 0) {
-            kill(pid, SIGKILL);
-            usleep(200000);
-        }
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
-        std::cout << "● reachy_voice_bot (PID: " << pid << ") 已停止" << std::endl;
-    } else {
-        std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
-        // 清理残留文件
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
-    }
-}
+    bool stopped = false;
 
-static void do_status() {
+    // 1. 通过 PID 文件终止
+    if (pid > 0 && kill(pid, 0) == 0) {
+        kill_pid(pid);
+        stopped = true;
+        std::cout << "● reachy_voice_bot (PID: " << pid << ") 已停止" << std::endl;
+    }
+
+    // 2. 通过进程名查找残留进程 (防止 PID 文件被覆盖后无法停止旧进程)
+    FILE *fp = popen("pidof reachy_voice_bot 2>/dev/null", "r");
+    if (fp) {
+        char buf[256] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            // pidof 返回空格分隔的 PID 列表
+            char *saveptr = NULL;
+            char *token = strtok_r(buf, " \n", &saveptr);
+            while (token) {
+                pid_t p = (pid_t)atoi(token);
+                if (p > 0 && p != getpid() && kill(p, 0) == 0) {
+                    kill_pid(p);
+                    if (!stopped) {
+                        std::cout << "● reachy_voice_bot (PID: " << p << ") 已停止" << std::endl;
+                    } else {
+                        std::cout << "● 清理残留进程 (PID: " << p << ")" << std::endl;
+                    }
+                    stopped = true;
+                }
+                token = strtok_r(NULL, " \n", &saveptr);
+            }
+        }
+        pclose(fp);
+    }
+
+    if (!stopped) {
+        std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
+    }
+
+    // 清理 PID/state 文件
+    unlink(PID_FILE);
+    unlink(STATE_FILE);
+    // 同步终止 llama-server (防止 SIGKILL 后 atexit 未执行)
+    stop_llama_server();
+}static void do_status() {
     if (is_daemon_running()) {
         std::cout << "● reachy_voice_bot 状态: 运行中" << std::endl;
         std::cout << "  PID: " << get_stored_pid() << std::endl;
@@ -337,6 +398,7 @@ void listAudioDevices() {
 int main(int argc, char *argv[]) {
     // 提升 new_argv 作用域，防止守护进程模式下 argv 悬空指针
     std::vector<char *> new_argv;
+    bool is_daemon_child = false;  // 标记是否为 fork 出的守护子进程
 
     // -------------------------------------------------------------------------
     // 守护进程管理: start / stop / status
@@ -372,6 +434,9 @@ int main(int argc, char *argv[]) {
             }
             // 子进程：守护进程化
             setsid();
+            is_daemon_child = true;  // 标记为守护子进程，跳过后续互斥检查
+            // 日志轮转 (超过 2MB 时保留为 .old)
+            rotate_log();
             // 关闭 stdin，重定向 stdout/stderr 到日志文件
             freopen("/dev/null", "r", stdin);
             if (!freopen(LOG_FILE, "a", stdout)) {
@@ -395,6 +460,15 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, voiceSignalHandler);
     signal(SIGTERM, voiceSignalHandler);
 
+    // 互斥检查: 无论前台还是后台模式，若已有实例在运行则拒绝启动
+    // 注意: 守护子进程跳过此检查 (父进程 fork 前已验证过)
+    if (!is_daemon_child && is_daemon_running()) {
+        pid_t existing = get_stored_pid();
+        std::cerr << "● reachy_voice_bot 已在运行中 (PID: " << existing
+                    << ")，请先执行 stop 后再启动" << std::endl;
+        return 1;
+    }
+
     // 注册退出清理 (清理 PID/state 文件)
     atexit(daemon_cleanup);
 
@@ -408,6 +482,78 @@ int main(int argc, char *argv[]) {
 
     // 初始状态: 初始化中 (各引擎就绪后切换为 对话模式)
     write_state("初始化中");
+
+    // -------------------------------------------------------------------------
+    // 自动下载模型 (LLM + 视觉模型)
+    // 通过可执行文件路径推导项目根目录，执行下载脚本
+    // -------------------------------------------------------------------------
+    {
+        // 推导项目根目录: exe 位于 <sdk_root>/output/staging/bin/
+        char exe_path[1024] = {0};
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0) {
+            exe_path[exe_len] = '\0';
+            std::string exe_str(exe_path);
+            std::string exe_dir = exe_str.substr(0, exe_str.rfind('/'));
+
+            // 尝试从 <sdk_root>/output/staging/bin/ 推导 sdk_root
+            std::string sdk_root;
+            // 检查 exe_dir 是否以 /output/staging/bin 结尾
+            const std::string staging_suffix = "/output/staging/bin";
+            if (exe_dir.size() > staging_suffix.size() &&
+                exe_dir.compare(exe_dir.size() - staging_suffix.size(),
+                                staging_suffix.size(), staging_suffix) == 0) {
+                sdk_root = exe_dir.substr(0, exe_dir.size() - staging_suffix.size());
+            } else {
+                // 回退: 假设 exe 在项目根目录下
+                sdk_root = exe_dir;
+            }
+
+            // 下载模型 + 启动 llama-server (脚本内部处理)
+            std::string model_script = sdk_root +
+                "/application/native/reachy_mini/config/download_face_gesture_models.sh";
+            if (access(model_script.c_str(), X_OK) == 0) {
+                std::cout << getTimestamp()
+                    << " [ModelSetup] 检查模型并启动 LLM 服务...\n";
+                bool is_local_llm = true;
+                if (!cfg.llm_url.empty()) {
+                    if (cfg.llm_url.find("127.0.0.1") == std::string::npos &&
+                        cfg.llm_url.find("localhost") == std::string::npos &&
+                        cfg.llm_url.find("0.0.0.0") == std::string::npos) {
+                        is_local_llm = false;
+                    }
+                }
+
+                std::string cmd = model_script;
+                if (is_local_llm) {
+                    cmd += " --start-server";
+                    // 传递模型名称 (来自命令行 --model 或配置文件)
+                    if (cfg.llm_model_set && !cfg.llm_model.empty()) {
+                        cmd += " --model " + cfg.llm_model;
+                    }
+                } else {
+                    std::cout << getTimestamp() << " [ModelSetup] 正在使用云端 LLM，仅下载视觉模型...\n";
+                }
+                // 传递配置文件路径，让脚本从中读取 llm.model
+                std::string cfg_for_script = cfg.config_path;
+#ifdef DEFAULT_CONFIG_PATH
+                if (cfg_for_script.empty()) {
+                    cfg_for_script = DEFAULT_CONFIG_PATH;
+                }
+#endif
+                if (!cfg_for_script.empty() &&
+                    access(cfg_for_script.c_str(), R_OK) == 0) {
+                    cmd += " --config " + cfg_for_script;
+                }
+                int ret = system(cmd.c_str());
+                if (ret != 0) {
+                    std::cerr << getTimestamp()
+                        << " [ModelSetup] 警告: 模型脚本返回非零: "
+                        << ret << "\n";
+                }
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // 加载配置文件 (优先级: 命令行 > 配置文件 > 自动探测)
@@ -1293,16 +1439,20 @@ int main(int argc, char *argv[]) {
     // -------------------------------------------------------------------------
     // 开始对话
     // -------------------------------------------------------------------------
-    std::cout << getTimestamp() << " [等待语音输入...]\n" << std::flush;
 
-    if (!capture.Start(cfg.capture_rate, cfg.capture_channels)) {
-        std::cerr << getTimestamp() << " 错误: 无法启动录音设备\n";
-        player.Stop();
-        player.Close();
-        return 1;
+    // LLM + TTS 预热：在启动录音前完成，避免用户说话时冷启动延迟
+    // 传入 tools schema 和 conversation_messages（含 system prompt）确保完整预热
+#ifdef USE_MCP
+    {
+        std::lock_guard<std::mutex> lock(mcp.conversation_mutex);
+        warmupLLM(llm, mcp.llm_tools_json, &mcp.conversation_messages);
     }
+#else
+    warmupLLM(llm, "", nullptr);
+#endif
+    warmupTTS(tts);
 
-    // 播放开机问候语
+    // 播放开机问候语（在录音启动前播放，避免误识别）
     {
         std::string greeting = "欢迎使用 Reachy mini 应用，请开始对话吧";
         std::cout << getTimestamp() << " [开机问候] " << greeting << "\n";
@@ -1310,12 +1460,22 @@ int main(int argc, char *argv[]) {
         if (tts_greeting && tts_greeting->IsSuccess()) {
             auto audio_data = tts_greeting->GetAudioData();
             enqueuePlayback(pcm16BytesToFloat(audio_data), tts_sample_rate);
-            // 等待问候语播放完成再开始监听
+            // 等待问候语播放完成再启动录音
             while (is_playing.load() && g_running) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
         std::cout << getTimestamp() << " [开机问候] 播放完成，开始监听\n";
+    }
+
+    // 录音在问候语播放完成后再启动，避免误识别用户未开口的声音
+    std::cout << getTimestamp() << " [等待语音输入...]\n" << std::flush;
+
+    if (!capture.Start(cfg.capture_rate, cfg.capture_channels)) {
+        std::cerr << getTimestamp() << " 错误: 无法启动录音设备\n";
+        player.Stop();
+        player.Close();
+        return 1;
     }
 
     // 所有初始化完成，切换为对话模式
@@ -1371,6 +1531,9 @@ int main(int argc, char *argv[]) {
 
     // 确保退出时释放所有跟踪器资源
     voice_ctl_cleanup();
+
+    // 终止由本程序启动的 llama-server
+    stop_llama_server();
 
     std::cout << "\n" << getTimestamp() << " [已退出]\n";
     return 0;

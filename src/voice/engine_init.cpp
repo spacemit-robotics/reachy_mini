@@ -38,6 +38,34 @@ LLMInitResult initLLM(const std::string &llm_model, const std::string &llm_url,
     return result;
 }
 
+void warmupLLM(std::shared_ptr<spacemit_llm::LLMService> llm,
+                const std::string &tools_json,
+                const std::vector<spacemit_llm::ChatMessage> *conversation_messages) {
+    if (!llm) return;
+    std::cout << getTimestamp() << " [LLM] 预热中..." << std::flush;
+    // 使用完整的 conversation context（包含 system prompt）进行预热
+    // 这样可以预热整个 prompt 处理流程，消除首轮对话的冷启动延迟
+    std::vector<spacemit_llm::ChatMessage> warmup_msgs;
+    if (conversation_messages && !conversation_messages->empty()) {
+        // 复制 system message(s) 以保持相同的 context
+        warmup_msgs = *conversation_messages;
+    }
+    // 添加预热用的 user message
+    warmup_msgs.push_back(spacemit_llm::ChatMessage::User("你好，请用一句话介绍你自己"));
+
+    std::string dummy;
+    int token_count = 0;
+    auto start = std::chrono::steady_clock::now();
+    llm->chat_stream(warmup_msgs, [&dummy, &token_count](const std::string &chunk, bool, const std::string &) {
+        dummy += chunk;
+        token_count++;
+        return true;
+    }, tools_json);  // 传入 tools schema
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+    std::cout << " OK (" << token_count << " tokens, " << elapsed << "ms)\n";
+}
+
 std::shared_ptr<SpacemiT::VadEngine> initVAD(float vad_threshold) {
     std::cout << getTimestamp() << " [2/5] 初始化 VAD..." << std::flush;
 
@@ -91,6 +119,18 @@ TTSInitResult initTTS(const std::string &tts_type) {
     result.sample_rate = result.tts->GetSampleRate();
     std::cout << " OK (" << result.tts->GetEngineName() << ", " << result.sample_rate << " Hz)\n";
     return result;
+}
+
+void warmupTTS(std::shared_ptr<SpacemiT::TtsEngine> tts) {
+    if (!tts) return;
+    std::cout << getTimestamp() << " [TTS] 预热中..." << std::flush;
+    // 合成一个短句触发模型加载
+    auto result = tts->Call("你好");
+    if (result && result->IsSuccess()) {
+        std::cout << " OK\n";
+    } else {
+        std::cout << " (跳过)\n";
+    }
 }
 
 // ============================================================================
@@ -152,20 +192,8 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
         std::cout << "\n"
                 << getTimestamp() << " [MCP] 工具列表已更新: " << merged.size() << " 个工具\n";
 
-        // 首次获得工具时，注入系统消息提示 LLM 使用工具
+        // 首次获得工具时，记录标记
         if (!had_tools_before && !merged.empty() && !result.tools_hint_added) {
-            std::string tools_list_str;
-            for (const auto &tool : merged) {
-                tools_list_str += "- " + tool.name + ": " + tool.description + "\n";
-            }
-
-            std::lock_guard<std::mutex> conversation_lock(result.conversation_mutex);
-            result.conversation_messages.push_back(spacemit_llm::ChatMessage::System(
-                "现在已经加载了以下 MCP 工具，可以用于实际控制设备或调用后端服务：\n" +
-                tools_list_str +
-                "\n从现在开始，凡是与这些设备或服务控制 / 查询相关的请求，必须优先调用对应的 MCP "
-                "工具完成操作，"
-                "不要只用自然语言假装已经完成。"));
             result.tools_hint_added = true;
         }
     });
@@ -229,22 +257,28 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
     // 初始加载工具（至少包含本地工具）
     size_t total_tools = updateToolsJson();
 
-    std::chrono::milliseconds server_wait_timeout(10000);
-    for (const auto &srv : result.config.servers) {
-        if (srv.type == "stdio") {
-            server_wait_timeout =
-                std::max(server_wait_timeout, std::chrono::milliseconds(srv.startup_timeout));
+    // 仅在配置了外部服务器时才阻塞等待连接，避免无服务器场景下空等 10 秒
+    if (!result.config.servers.empty()) {
+        std::chrono::milliseconds server_wait_timeout(10000);
+        for (const auto &srv : result.config.servers) {
+            if (srv.type == "stdio") {
+                server_wait_timeout =
+                    std::max(server_wait_timeout, std::chrono::milliseconds(srv.startup_timeout));
+            }
         }
-    }
 
-    if (result.manager->waitForAnyServer(server_wait_timeout)) {
-        total_tools = updateToolsJson();
-        std::cout << getTimestamp() << " [MCP] 已连接 " << result.manager->readyServerCount()
-                << " 个服务器, 共 " << total_tools << " 个工具 ("
-                << result.action_provider->getTools().size() << " 本地)\n";
+        if (result.manager->waitForAnyServer(server_wait_timeout)) {
+            total_tools = updateToolsJson();
+            std::cout << getTimestamp() << " [MCP] 已连接 " << result.manager->readyServerCount()
+                    << " 个服务器, 共 " << total_tools << " 个工具 ("
+                    << result.action_provider->getTools().size() << " 本地)\n";
+        } else {
+            std::cout << getTimestamp() << " [MCP] 警告: 外部服务器连接超时，仅使用 "
+                    << result.action_provider->getTools().size() << " 个本地工具\n";
+        }
     } else {
-        std::cout << getTimestamp() << " [MCP] 警告: 无可用服务器，但已启用 "
-                << result.action_provider->getTools().size() << " 个本地工具\n";
+        std::cout << getTimestamp() << " [MCP] 无外部服务器，直接使用 "
+                << total_tools << " 个本地工具\n";
     }
 
     {
@@ -252,26 +286,10 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
         result.conversation_messages.push_back(
             spacemit_llm::ChatMessage::System(result.config.system_prompt));
 
-        // 如果已有工具（含本地工具）且尚未注入 hint，立即注入工具提示
-        // 这对纯本地工具场景（无外部 MCP 服务器）至关重要，因为 onToolChange 不会被触发
+        // 如果已有工具（含本地工具）且尚未注入 hint，进行标记
         if (total_tools > 0 && !result.tools_hint_added) {
-            auto all_tools = result.manager->getAllTools();
-            auto local_tools = result.action_provider->getTools();
-            all_tools.insert(all_tools.end(), local_tools.begin(), local_tools.end());
-
-            std::string tools_list_str;
-            for (const auto &tool : all_tools) {
-                tools_list_str += "- " + tool.name + ": " + tool.description + "\n";
-            }
-
-            result.conversation_messages.push_back(spacemit_llm::ChatMessage::System(
-                "现在已经加载了以下工具，可以用于实际控制机器人：\n" +
-                tools_list_str +
-                "\n当用户要求做动作（如转头、点头、跳舞等）时，必须调用对应的工具完成操作，"
-                "不要只用自然语言假装已经完成。"));
             result.tools_hint_added = true;
-            std::cout << getTimestamp() << " [MCP] 已注入工具提示 (" << all_tools.size()
-                    << " 个工具)\n";
+            std::cout << getTimestamp() << " [MCP] 使用 tools schema 提供工具信息，已跳过额外 prompt 拼接\n";
         }
     }
 

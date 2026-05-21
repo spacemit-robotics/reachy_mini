@@ -53,6 +53,11 @@ float motion_get_current_roll(void);
 float motion_get_current_pitch(void);
 float motion_get_current_yaw(void);
 
+// ========== 硬件速度限制（Profile Velocity） ==========
+// 设置 motion_move_to_async 发送指令时附带的 vel_des (rad/s)
+// 设为 0 表示不限速（电机以最大速度运动）
+void motion_set_vel_limit(float vel_rad_per_s);
+
 #ifdef __cplusplus
 }
 #endif
