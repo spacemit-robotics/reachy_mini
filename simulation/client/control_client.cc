@@ -111,11 +111,14 @@ class ControlClient {
         // 启动输入读取线程
         std::thread input_thread([this]() { captureInput(); });
 
-        auto last_time = std::chrono::steady_clock::now();
-        while (running_) {
-            auto now = std::chrono::steady_clock::now();
-            double dt = std::chrono::duration<double>(now - last_time).count();
-            last_time = now;
+        double last_sim_time = -1.0;
+        SimState state;
+        
+        // 使用服务端推送的 SimState 来驱动客户端逻辑，避免使用 local sleep 导致时序不匹配
+        while (running_ && stream->Read(&state)) {
+            double current_sim_time = state.sim_time();
+            double dt = (last_sim_time >= 0.0) ? (current_sim_time - last_sim_time) : 0.02;
+            last_sim_time = current_sim_time;
 
             updateActions(dt);
 
@@ -147,12 +150,13 @@ class ControlClient {
                 req.set_left_antenna(la_);
             }
             stream->Write(req);
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));  // ~50Hz
         }
 
         stream->WritesDone();
         stream->Finish();
+        
+        running_ = false;
+        // 注意：如果 stdin 阻塞，input_thread 需按一次键才能唤醒退出
         input_thread.join();
     }
 
