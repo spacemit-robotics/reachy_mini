@@ -1,0 +1,22 @@
+SpacemiT reachy_mini
+Copyright 2026 SpacemiT (Hangzhou) Technology Co. Ltd.
+
+This product includes software developed at
+SpacemiT (Hangzhou) Technology Co. Ltd. (https://www.spacemit.com/).
+
+---------------------------------------------------------------------------
+Third-party Software Notices:
+---------------------------------------------------------------------------
+
+
+The mechanical structure and 3D models in this project are derived from
+the open-source project "Reachy Mini" by Pollen Robotics.
+
+  Original repository: https://github.com/pollen-robotics/reachy_mini
+  Original author:     Pollen Robotics (France)
+  Original license:    CC BY-NC-SA 4.0
+
+In accordance with the CC BY-NC-SA 4.0 license of the original project,
+all derivative hardware models in this repository are released under the
+same CC BY-NC-SA 4.0 license.
+
