@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>reachy_mini_mujoco</name>
+  <version>0.1.0</version>
+  <description>Reachy Mini: mujoco sim server</description>
+  <depend>mujoco</depend>
+
+  <system_depend check="pkg-config --exists protobuf">libprotobuf-dev</system_depend>
+  <system_depend check="which protoc">protobuf-compiler</system_depend>
+  <system_depend check="pkg-config --exists grpc++">libgrpc++-dev</system_depend>
+  <system_depend check="which grpc_cpp_plugin">protobuf-compiler-grpc</system_depend>
+  <system_depend check="which pkg-config">pkg-config</system_depend>
+  <system_depend check="which cmake">cmake</system_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+</export>
+</package>
