@@ -1,0 +1,13 @@
+simulation:
+  mujoco:
+    init_height: 0.0
+    assist_height: 0.0
+    assist_kp: 500.0
+    assist_kd: 100.0
+    assist_gravity_compensation: 0.0
+    sim_dt: 0.002
+    # Reachy Mini 自由度: body_yaw, stewart_1..6, right_antenna, left_antenna
+    controller:
+      kp: [100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+      kd: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+      default_joint_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

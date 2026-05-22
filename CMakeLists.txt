@@ -29,6 +29,8 @@ find_package(motor QUIET HINTS ${STAGING_DIR}/lib/cmake/motor)
 # 自动识别组件源码路径
 set(COMPONENTS_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../components")
 
+include(ExternalProject)
+
 # 辅助函数：确保组件已构建并导入
 # usage: ensure_component_built(name src_rel_path lib_names...)
 function(ensure_component_built _name _rel_path)
@@ -61,13 +63,19 @@ function(ensure_component_built _name _rel_path)
             
             message(WARNING "[Internal] ${_name} missing, creating auto-build target for ${_src_dir}")
             
-            add_custom_command(
-                OUTPUT "${_primary_lib}"
-                COMMAND ${CMAKE_COMMAND} -S "${_src_dir}" -B "${_build_dir}" -DCMAKE_INSTALL_PREFIX="${STAGING_DIR}" "-DCMAKE_C_FLAGS=-w" "-DCMAKE_CXX_FLAGS=-w -Wno-missing-template-keyword"
-                COMMAND ${CMAKE_COMMAND} --build "${_build_dir}" --target install -j4
-                COMMENT "Auto-building missing component: ${_name}"
+            ExternalProject_Add(${_name}_auto_build
+                PREFIX "${_build_dir}/ep"
+                SOURCE_DIR "${_src_dir}"
+                BINARY_DIR "${_build_dir}"
+                CMAKE_ARGS
+                    -DCMAKE_INSTALL_PREFIX=${STAGING_DIR}
+                    -DCMAKE_C_FLAGS=-w
+                    "-DCMAKE_CXX_FLAGS=-w -Wno-missing-template-keyword"
+                    ${${_name}_EXTRA_CMAKE_ARGS}
+                BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install -j4
+                INSTALL_COMMAND ""
+                BUILD_BYPRODUCTS "${_primary_lib}"
             )
-            add_custom_target(${_name}_auto_build DEPENDS "${_primary_lib}")
             
             set_target_properties(components::${_name} PROPERTIES IMPORTED_LOCATION "${_primary_lib}")
             add_dependencies(components::${_name} ${_name}_auto_build)
@@ -77,6 +85,7 @@ endfunction()
 
 # 始终确保组件目标存在（无论 ComponentsConfig.cmake 是否被找到）
 # motor
+set(motor_EXTRA_CMAKE_ARGS "-DSROBOTIS_PERIPHERALS_MOTOR_ENABLED_DRIVERS=drv_uart_xl330")
 ensure_component_built(motor peripherals/motor libmotor.a)
 # vision
 ensure_component_built(vision model_zoo/vision libvision.so)
@@ -136,8 +145,6 @@ set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib")
 # ============================================================================
 # 公共 motor 链接库列表（通过 find_package 导入，传递依赖自动继承）
 # ============================================================================
-find_library(ETHERCAT_LIBRARY NAMES ethercat libethercat.so.1)
-
 set(MOTOR_LIBS
     -Wl,--whole-archive
     components::motor
@@ -145,18 +152,13 @@ set(MOTOR_LIBS
     m stdc++ pthread dl rt
     gpiod
 )
-if(ETHERCAT_LIBRARY)
-    list(APPEND MOTOR_LIBS ${ETHERCAT_LIBRARY})
-else()
-    list(APPEND MOTOR_LIBS ethercat)
-endif()
 
 # 如果 motor_config 没找到，我们手动设置 MOTOR_RUST_LIB 为预期的安装路径
 if(NOT MOTOR_RUST_LIB)
     set(MOTOR_RUST_LIB "${STAGING_DIR}/lib/libreachy_mini_motor_controller.a")
 endif()
 
-# Rust 伴生库（如果 motor 构建时启用了 drv_uart_rm）
+# Rust 伴生库（如果 motor 构建时启用了 drv_uart_xl330）
 if(MOTOR_RUST_LIB AND NOT "${MOTOR_RUST_LIB}" STREQUAL "")
     # 由 ensure_component_built(motor) 统一负责编译，避免多进程同时 cmake 产生冲突
     list(APPEND MOTOR_LIBS ${MOTOR_RUST_LIB})
@@ -436,58 +438,4 @@ endforeach()
 # ============================================================================
 # 仿真控制客户端 (Simulation Client) — 针对开发板优化
 # ============================================================================
-
-find_package(PkgConfig REQUIRED)
-
-# 极简查找逻辑：优先使用 PkgConfig (在 Linux 开发板上速度最快)
-pkg_check_modules(PROTOBUF REQUIRED protobuf)
-pkg_check_modules(GRPC REQUIRED grpc++ grpc)
-
-# 查找插件
-find_program(GRPC_CPP_PLUGIN_EXE NAMES grpc_cpp_plugin)
-if(NOT GRPC_CPP_PLUGIN_EXE)
-    message(FATAL_ERROR "找不到 grpc_cpp_plugin 插件")
-endif()
-
-# ── Protobuf & gRPC 代码生成 ─────────────────────────────
-set(PROTO_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/simulation")
-set(PROTO_FILE    "${PROTO_SRC_DIR}/reachy_sim.proto")
-set(PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen_sim")
-file(MAKE_DIRECTORY ${PROTO_GEN_DIR})
-
-set(PROTO_HDRS "${PROTO_GEN_DIR}/reachy_sim.pb.h" "${PROTO_GEN_DIR}/reachy_sim.grpc.pb.h")
-set(PROTO_SRCS "${PROTO_GEN_DIR}/reachy_sim.pb.cc" "${PROTO_GEN_DIR}/reachy_sim.grpc.pb.cc")
-
-add_custom_command(
-    OUTPUT ${PROTO_HDRS} ${PROTO_SRCS}
-    COMMAND protoc
-    ARGS --cpp_out=${PROTO_GEN_DIR}
-         --grpc_out=${PROTO_GEN_DIR}
-         --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN_EXE}
-         --proto_path=${PROTO_SRC_DIR}
-         ${PROTO_FILE}
-    DEPENDS ${PROTO_FILE}
-    COMMENT "Generating gRPC and Protobuf code from ${PROTO_FILE}"
-)
-
-# 仿真目标包含路径
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/simulation
-    ${PROTO_GEN_DIR}
-    ${PROTOBUF_INCLUDE_DIRS}
-    ${GRPC_INCLUDE_DIRS}
-)
-
-# 聚合搜索路径
-link_directories(${PROTOBUF_LIBRARY_DIRS} ${GRPC_LIBRARY_DIRS})
-
-# 3. control_client (解耦控制客户端，含 IK 解算)
-add_executable(control_client simulation/control_client.cc src/kinematics/src/reachy_kinematics.c ${PROTO_SRCS})
-target_link_libraries(control_client 
-    ${GRPC_LIBRARIES} 
-    ${PROTOBUF_LIBRARIES} 
-    m pthread
-)
-
-# 安装规则
-install(TARGETS control_client RUNTIME DESTINATION bin)
+add_subdirectory(simulation/client)
