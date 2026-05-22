@@ -21,7 +21,7 @@ set(STAGING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../output/staging")
 # ============================================================================
 # 依赖组件导入 — 通过 CMake config 导入（由构建系统 package.xml 保证先编译）
 # ============================================================================
-find_package(motor QUIET HINTS ${STAGING_DIR}/lib/cmake/motor)
+# find_package(motor QUIET HINTS ${STAGING_DIR}/lib/cmake/motor)
 # NOTE: find_package(Components) 已移除 — 所有组件通过下方 ensure_component_built() 导入
 # 如果遇到 ComponentsConfig.cmake parse error，请删除损坏的文件:
 #   rm -f output/staging/lib/cmake/Components/ComponentsConfig.cmake
