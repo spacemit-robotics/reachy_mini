@@ -230,19 +230,21 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                         << " [MCP] Tracker 已启动，跳过后续 LLM 轮次以避免 TCM 冲突\n";
                     full_response.clear();
                     text_buffer.clear();
-                break;
+                    break;
+                }
+
+                full_response.clear();
+                text_buffer.clear();
+                continue;
             }
 
-            full_response.clear();
-            text_buffer.clear();
-            continue;
-        }
+            {
+                std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
+                ctx.conversation_messages->push_back(
+                    spacemit_llm::ChatMessage::Assistant(result.content));
+            }
 
-        {
-            std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
-            ctx.conversation_messages->push_back(
-                spacemit_llm::ChatMessage::Assistant(result.content));
-        }            if (!g_barge_in) {
+            if (!g_barge_in) {
                 std::string remaining = text_buffer.getNextSentence();
                 if (!remaining.empty()) {
                     synthesizeSentence(remaining);

@@ -113,7 +113,7 @@ class ControlClient {
 
         double last_sim_time = -1.0;
         SimState state;
-        
+
         // 使用服务端推送的 SimState 来驱动客户端逻辑，避免使用 local sleep 导致时序不匹配
         while (running_ && stream->Read(&state)) {
             double current_sim_time = state.sim_time();
@@ -154,7 +154,7 @@ class ControlClient {
 
         stream->WritesDone();
         stream->Finish();
-        
+
         running_ = false;
         // 注意：如果 stdin 阻塞，input_thread 需按一次键才能唤醒退出
         input_thread.join();

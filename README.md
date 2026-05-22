@@ -55,7 +55,7 @@ repo sync -j4
 repo start robot-dev --all
 ```
 
-### 3.2 外部依赖
+### 3.3 外部依赖
 
 **核心依赖**：
 - `components/peripherals/motor` — 电机驱动库
@@ -78,7 +78,7 @@ repo start robot-dev --all
 
 **_所有依赖在编译时会被下载_**
 
-### 3.3 编译构建
+### 3.4 编译构建
 ```
 cd spacemit_robot    # 跳转下载 SDK 的目录，即项目根目录
 
@@ -125,7 +125,7 @@ m  #执行编译
 `reachy_voice_bot` 是 Reachy Mini 的核心应用，将语音对话、动作控制、视觉跟随、舞蹈表演统一在一个语音入口中，用户无需切换程序即可完成所有交互。
 
 ### 4.1 前置准备
-完成 [3.3编译](#33-编译构建)
+完成 [3.4编译](#34-编译构建)
 
 ### 4.2 启动方式
 #### 1. 启动
@@ -369,46 +369,65 @@ amixer -c 0 sset 'PCM',1 80%     # 增益
 
 ## 7. 仿真控制
 
-通过 gRPC 双向流式通信远程控制 PC 端的 MuJoCo 仿真服务端（`sim_server`），实现远程遥控仿真机器人。
-
-
-### 代码获取
-
-
-**注：仿真服务端在 pc 上运行，当前支持 linux 系统**
-
-[代码仓库](https://gitlab.dc.com:8443/robotics/simulation)
-```
-git clone https://gitlab.dc.com:8443/robotics/simulation.git
-```
-下载资源文件
-```
-cd simulation
-wget -r -np -nH --cut-dirs=2 -R index.html https://archive.spacemit.com/ros2/simulation_reachy_mini/assets/
-```
-**仿真服务端** 代码仅内部开放，持续更新中
+通过 gRPC 双向流式通信远程控制 PC 端的 MuJoCo 仿真服务端（`sim_server`），实现远程遥控仿真机器人。系统分为两部分：
+- **客户端 (`control_client`)**：运行在开发板上，负责键盘指令读取、运动学 IK 解算以及 gRPC 指令发送。
+- **服务端 (`sim_server` 等)**：运行在 PC 端（x86_64 Linux），基于 MuJoCo 引擎提供 3D 可视化渲染、悬挂保护及物理仿真。
 
 ### 7.1 架构
 
-
 ![Reach Mini simulation architecture](assets/simulation_architecture.png)
+仿真建模及渲染调用 components/simulation/mujoco 接口实现和管理
 
-### 7.2 编译
-客户控制端：
+### 7.2 PC 端（服务端）环境与依赖
 
-如果已经通过 mm/m 编译，则不用再执行本步骤
+**注：仿真服务端必须在 PC 端（支持 x86_64 Linux 系统）运行**
+
+**MuJoCo SDK (必需)**
+下载并解压 MuJoCo 3.7.0：
 ```bash
-# 编译（作为主项目子模块自动编译，或单独编译）
-cd simulation
-mkdir -p build && cd build
-cmake .. && make -j$(nproc)
+cd ~/workspaces
+wget https://github.com/google-deepmind/mujoco/releases/download/3.7.0/mujoco-3.7.0-linux-x86_64.tar.gz
+tar xzf mujoco-3.7.0-linux-x86_64.tar.gz
+```
+*(默认查找路径为 `$HOME/workspaces/mujoco-3.7.0-linux-x86_64/mujoco-3.7.0`，如果放在其他位置，请在下面编译时通过 `-DMUJOCO_ROOT=<路径>` 指定)*
+
+
+### 7.3 编译构建
+
+**开发板端（客户端）：**
+如果已经通过 `mm` 或 `m` 编译了整个机器人 SDK，则客户端 `control_client` 已经自动编译并存放在 `output/staging/bin/`。
+
+**PC 端（服务端）：**
+
+下载代码
+```
+mkdir spacemit_robot  # SDK 根目录
+cd spacemit_robot
+repo init -u https://github.com/spacemit-robotics/manifest.git -b main -m default.xml   --repo-url=https://gitee.com/spacemit-robotics/git-repo  -g core,reachy_mini,simulation
+
+source build/envsetup.sh 
+```
+
+获取模型文件
+```
+cd application/native/reachy_mini/simulation/server
+
+wget -c -r -np -nH -e robots=off --cut-dirs=3 -P assets/ https://archive.spacemit.com/ros2/simulation_reachy_mini/assets/
 
 ```
-仿真服务端见[代码仓库](https://gitlab.dc.com:8443/robotics/simulation)文档说明
+编译
 
-### 7.3 网络配置
+```bash
+cd application/native/reachy_mini/simulation/server
+mm -DMUJOCO_ROOT=/path/to/mujoco-3.7.0  # 下载的 mujoco 路径
+```
+编译产物位于 `output/staging/bin/`。
+
+### 7.4 网络配置
 
 WiFi 延迟抖动较大，建议使用网线直连 PC 和开发板：
+
+如果主机与板端之间通信延迟小于 5 ms，不用网线直连也能获得很好的控制体验，启动时使用本机的 WiFi IP 地址即可。
 
 ```bash
 # PC 端配置静态 IP
@@ -423,24 +442,42 @@ sudo ip link set eth0 up
 ping 192.168.88.1
 ```
 
+### 7.5 启动与运行
 
-### 7.4 运行
-
+**1. 启动 PC 端仿真服务**
 ```bash
-# PC 端启动仿真服务
-./sim_server 0.0.0.0:50051
-
-# 开发板端启动客户端（默认连接 192.168.88.100:50051）
-./control_client
-
-# 指定服务端地址
-./control_client 192.168.88.1:50051
+# 默认监听 0.0.0.0:50051
+sim_server <IP>  # <IP> 为 PC 的 IP 地址
 ```
-服务端
+服务端效果图：
 ![仿真端效果](assets/reachy-mini_simulation_effect.jpg)
 
-### 7.5 键盘控制
+**2. 启动开发板客户端**
+```bash
+# 默认连接 192.168.88.100:50051
+control_client 
 
+# 指定服务端的实际 IP 地址（如网线直连 IP）
+control_client 192.168.88.1:50051
+```
+
+
+
+### 7.6 操控说明
+
+在成功连接并运行后，您可以通过以下方式进行交互：
+
+**PC 服务端渲染窗口交互（系统与视角）**
+| 操作 | 功能 |
+|------|------|
+| `Space` | 暂停/恢复仿真 |
+| `F` | 切换悬挂保护开关（防止机器人跌倒） |
+| `↑` / `↓` | 调节悬挂保护目标高度 (±5cm) |
+| `R` | 重置悬挂高度到默认值 |
+| 左键 / 右键拖拽 | 旋转视角 / 平移视角 (结合 Shift 为水平面操作) |
+| 中键 / 滚轮 | 视角缩放 |
+
+**开发板客户端终端交互（遥控机器人）**
 | 按键 | 功能 | 说明 |
 |------|------|------|
 | `W/S` | Pitch 上/下 | [-35°, +35°]，步进 5° |
@@ -454,6 +491,16 @@ ping 192.168.88.1
 | `H` | 回到原点 | 所有轴归零 |
 | `ESC` | 退出程序 | — |
 
+### 7.7 gRPC 接口设计
+
+双向流式通信 Proto 定义见 `reachy_sim.proto`：
+```protobuf
+service ReachySimService {
+  rpc ControlStream (stream ControlRequest) returns (stream SimState);
+}
+```
+- **ControlRequest**：客户端下发头部角度（IK 由客户端解算）和天线角度。
+- **SimState**：仿真服务端作为主时钟，主动推送物理世界的时间（`sim_time`）和系统状态给客户端以维持时序同步。
 
 
 
