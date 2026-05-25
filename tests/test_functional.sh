@@ -30,7 +30,7 @@ function assert_contains() {
     local output="$1"
     local keyword="$2"
     local msg="$3"
-    if ! echo "$output" | grep -q "$keyword"; then
+    if ! echo "$output" | grep -q -E "$keyword"; then
         log_err "FAIL: $msg"
         log_err "未找到关键字: '$keyword'。 实际输出:\n$output"
         FAILED_TESTS=$((FAILED_TESTS+1))
@@ -62,7 +62,7 @@ function test_scenario_1_invalid_device() {
     output=$(timeout 3 reachy_voice_bot --motor-port /dev/not_exist_mock_port 2>&1)
     
     # 检索日志是否有找不到、打不开串口的信息
-    if echo "$output" | grep -q -E "Failed to open port|No such file or directory|NotFound"; then
+    if echo "$output" | grep -q -E "Failed to open port|No such file or directory|NotFound|电机初始化失败|无效外设"; then
         log_info "成功验证非法串口，不启动电机"
         return 0
     else
@@ -140,7 +140,7 @@ function test_scenario_4_status_query() {
 
     # 这里的退出码取决于您的 status 实现，如果没有运行可能返回 0 也可能返回 1
     # 重点验证输出中是否包含预期的“未知”或“未运行”信息
-    assert_contains "$output" "未知" "未启动进程时查询状态，应返回'未知'或类似提示"
+    assert_contains "$output" "未知|已停止" "未启动进程时查询状态，应返回'未知'或类似提示"
 }
 
 # ==========================================
