@@ -156,8 +156,9 @@ class ControlClient {
         stream->Finish();
 
         running_ = false;
-        // 注意：如果 stdin 阻塞，input_thread 需按一次键才能唤醒退出
-        input_thread.join();
+        if (input_thread.joinable()) {
+            input_thread.join();
+        }
     }
 
     private:
@@ -173,14 +174,25 @@ class ControlClient {
                     << "1-3 (Actions), ESC (Quit)" << std::endl;
 
         while (running_) {
-            char c;
-            if (read(STDIN_FILENO, &c, 1) > 0) {
-                std::lock_guard<std::mutex> lock(mtx_);
-                if (c == 27) {
-                    running_ = false;
-                    break;
-                }  // ESC
-                processKey(c);
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000; // 100ms timeout
+
+            int ret = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
+            if (ret > 0 && FD_ISSET(STDIN_FILENO, &fds)) {
+                char c;
+                if (read(STDIN_FILENO, &c, 1) > 0) {
+                    std::lock_guard<std::mutex> lock(mtx_);
+                    if (c == 27) {
+                        running_ = false;
+                        break;
+                    }  // ESC
+                    processKey(c);
+                }
             }
         }
         tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);

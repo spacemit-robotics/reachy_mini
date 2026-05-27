@@ -7,6 +7,7 @@
 # ==========================================
 TOTAL_TESTS=0
 FAILED_TESTS=0
+TEST_SIM_SERVER_PID=""
 
 # 日志输出格式
 function log_info() { echo -e "\033[32m[INFO] $1\033[0m"; }
@@ -44,8 +45,9 @@ function assert_contains() {
 function cleanup() {
     log_info "执行资源清理..."
     rm -f /tmp/test_bad_config.yaml
-    # 清理可能残留的仿真服务端
-    pkill -f sim_server || true
+    if [ -n "$TEST_SIM_SERVER_PID" ] && kill -0 "$TEST_SIM_SERVER_PID" 2>/dev/null; then
+        kill -9 "$TEST_SIM_SERVER_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
@@ -86,6 +88,7 @@ function test_scenario_2_simulation_loop() {
     # 后台启动仿真服务端 (绑定一个测试用的非默认端口避免冲突)
     sim_server 127.0.0.1:50052 >/dev/null 2>&1 &
     local server_pid=$!
+    TEST_SIM_SERVER_PID=$server_pid
     
     # 给服务端 2 秒启动时间
     sleep 2
@@ -131,8 +134,12 @@ function test_scenario_4_status_query() {
     ((TOTAL_TESTS++))
     log_info "--- 开始执行方案4: 状态查询接口验证 ---"
 
-    # 确保当前没有运行中的 bot
-    pkill -f reachy_voice_bot || true
+    local check_status
+    check_status=$(reachy_voice_bot status 2>&1)
+    if echo "$check_status" | grep -q "运行中"; then
+        log_info "已有 reachy_voice_bot 在运行，跳过状态(未知)查询测试，以免干扰已有业务。"
+        return 0
+    fi
     
     local output
     output=$(reachy_voice_bot status 2>&1)

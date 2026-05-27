@@ -207,9 +207,6 @@ static void do_status() {
         std::cout << "  模式: " << read_state() << std::endl;
     } else {
         std::cout << "○ reachy_voice_bot 状态: 未知 (程序未启动)" << std::endl;
-        // 清理残留文件
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
     }
 }
 
@@ -704,8 +701,7 @@ int main(int argc, char *argv[]) {
 
     // 初始化电机控制模块
     if (voice_ctl_init(cfg.motor_port.c_str(), 0.0f) < 0) {
-        std::cerr << getTimestamp() << " 错误: 电机初始化失败, 无效外设 (" << cfg.motor_port << ")\n";
-        return 1;
+        std::cerr << getTimestamp() << " 警告: 电机初始化失败, 无效外设 (" << cfg.motor_port << ")，将以无电机模式运行\n";
     }
     voice_ctl_set_camera_id(cfg.camera_id);
 
