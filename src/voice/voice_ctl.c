@@ -140,7 +140,10 @@ int voice_ctl_init(const char *serial_port, float default_delay) {
     }
 
     // 初始化电机状态
-    motor_init(g_devs, 9);
+    if (motor_init(g_devs, 9) < 0) {
+        printf("[VoiceCtl] 错误: 电机初始化失败\n");
+        return -1;
+    }
 
     // 2. 初始化 AsyncMotorController
     g_async_motor_ctrl = async_motor_controller_create(g_devs, 9);
