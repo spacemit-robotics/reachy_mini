@@ -1,0 +1,20 @@
+module: application/native/reachy_mini
+
+tests:
+  - name: reachy-mini-functional
+    description: Verifies configuration parsing, invalid device handling, simulator gRPC loops and IPC status.
+    category: functional
+    scopes: [pr]
+    timeout_s: 60  # 所有用例均不阻塞，60秒内必定跑完
+    workdir: sdk
+    command: |
+      bash application/native/reachy_mini/tests/test_functional.sh
+
+  - name: reachy-mini-manual
+    description: verifies device functionalities
+    category: functional
+    scopes: [manual]
+    timeout_s: 180
+    workdir: sdk
+    command: |
+      bash application/native/reachy_mini/tests/test_manual.sh

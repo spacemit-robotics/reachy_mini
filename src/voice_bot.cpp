@@ -198,16 +198,15 @@ static void do_stop() {
     unlink(STATE_FILE);
     // 同步终止 llama-server (防止 SIGKILL 后 atexit 未执行)
     stop_llama_server();
-}static void do_status() {
+}
+
+static void do_status() {
     if (is_daemon_running()) {
         std::cout << "● reachy_voice_bot 状态: 运行中" << std::endl;
         std::cout << "  PID: " << get_stored_pid() << std::endl;
         std::cout << "  模式: " << read_state() << std::endl;
     } else {
-        std::cout << "○ reachy_voice_bot 状态: 已停止" << std::endl;
-        // 清理残留文件
-        unlink(PID_FILE);
-        unlink(STATE_FILE);
+        std::cout << "○ reachy_voice_bot 状态: 未知 (程序未启动)" << std::endl;
     }
 }
 
@@ -702,7 +701,7 @@ int main(int argc, char *argv[]) {
 
     // 初始化电机控制模块
     if (voice_ctl_init(cfg.motor_port.c_str(), 0.0f) < 0) {
-        std::cerr << getTimestamp() << " 警告: 电机初始化失败, 执行运动指令时可能受限\n";
+        std::cerr << getTimestamp() << " 警告: 电机初始化失败, 无效外设 (" << cfg.motor_port << ")，将以无电机模式运行\n";
     }
     voice_ctl_set_camera_id(cfg.camera_id);
 

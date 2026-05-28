@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/usr/bin/env bash
+# 版权信息：# Copyright (C) 2026 SpacemiT (Hangzhou) Technology Co. Ltd.
+# SPDX-License-Identifier: Apache-2.0
 # 下载模型 (视觉 + LLM) 并可选启动 llama-server
 # 模型保存路径: ~/.cache/models/vision/ 和 ~/.cache/models/llm/
 #
@@ -9,7 +11,7 @@
 #   ./download_face_gesture_models.sh --start-server --config /path/to/config_paras.yaml
 
 
-set -e
+set -euo pipefail
 
 START_SERVER=0
 LLM_MODEL_NAME=""
@@ -27,7 +29,7 @@ done
 # 从配置文件解析 llm.model (简易 YAML 解析，仅在未通过 --model 指定时生效)
 if [ -z "$LLM_MODEL_NAME" ] && [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
   # 提取 llm.model 字段值，如 "qwen2.5:0.5b"
-  CFG_MODEL=$(grep -A5 '^llm:' "$CONFIG_FILE" | grep '^\s*model:' | head -1 \
+  CFG_MODEL=$( (grep -A5 '^llm:' "$CONFIG_FILE" || true) | (grep '^\s*model:' || true) | head -1 \
     | sed 's/.*model:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
   if [ -n "$CFG_MODEL" ]; then
     # 将 llm.model 格式 (如 "qwen2.5:0.5b") 映射为 gguf 文件名
@@ -63,8 +65,10 @@ case "$LLM_MODEL_NAME" in
     LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
   glm-edge:1.5b|glm-edge-1.5b)
     LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
-
-    # 已经是完整文件名
+  qwen3:30b|Qwen3-30B-A3B)
+    LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
+  *.gguf)
+    ;; # 已经是完整文件名
 esac
 
 echo "[ModelSetup] LLM model selected: $LLM_MODEL_NAME"
@@ -106,50 +110,41 @@ download "$CACHE_BASE/yolov5-face" \
   "https://archive.spacemit.com/spacemit-ai/model_zoo/vision/yolov5-face/yolov5n-face_cut.q.onnx" \
   "yolov5n-face_cut.q.onnx"
 
-# LLM 模型下载 (仅下载本地 .gguf 模型，云端 API 模型跳过)
+# LLM 模型下载 (仅下载本地 GGUF 模型，跳过云端 API 模型)
 LLM_CACHE="${HOME:-/tmp}/.cache/models/llm"
 LLM_BASE_URL="https://archive.spacemit.com/spacemit-ai/model_zoo/llm"
 
-# 检测是否为本地模型（.gguf 后缀）还是云端 API 模型
-case "$LLM_MODEL_NAME" in
-  *.gguf)
-    # 本地 GGUF 模型，执行下载
-    download "$LLM_CACHE" "$LLM_BASE_URL/$LLM_MODEL_NAME" "$LLM_MODEL_NAME"
-    echo ""
-    echo "Done. Models downloaded:"
-    echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
-    echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
-    echo "  $LLM_CACHE/$LLM_MODEL_NAME"
-    ;;
-  *)
-    # 云端 API 模型（如 gemini-embedding-001, gpt-4o-mini 等），跳过下载
-    echo ""
-    echo "Done. Models downloaded:"
-    echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
-    echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
-    echo "  [Skipped] Cloud API model: $LLM_MODEL_NAME (no local download needed)"
-    ;;
-esac
+# 检测是否为云端 API 模型 (不以 .gguf 结尾)
+if echo "$LLM_MODEL_NAME" | grep -q '\.gguf$'; then
+  # 本地 GGUF 模型，需要下载
+  download "$LLM_CACHE" "$LLM_BASE_URL/$LLM_MODEL_NAME" "$LLM_MODEL_NAME"
+  echo ""
+  echo "Done. Models downloaded:"
+  echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
+  echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
+  echo "  $LLM_CACHE/$LLM_MODEL_NAME"
+else
+  # 云端 API 模型 (如 gemini-*, gpt-*, claude-* 等)，跳过下载
+  echo ""
+  echo "Done. Models downloaded:"
+  echo "  $CACHE_BASE/yolov5/yolov5_gesture.q.onnx"
+  echo "  $CACHE_BASE/yolov5-face/yolov5n-face_cut.q.onnx"
+  echo "  LLM: Using cloud API model ($LLM_MODEL_NAME), skip download."
+fi
 
 # --------------------------------------------------------------------------
-# 启动 llama-server (仅在 --start-server 模式下且为本地模型时)
+# 启动 llama-server (仅在 --start-server 模式下且使用本地模型时)
 # --------------------------------------------------------------------------
 LLAMA_PID_FILE="/tmp/reachy_llama_server.pid"
 LLM_MODEL="$LLM_CACHE/$LLM_MODEL_NAME"
 LLAMA_PORT=8080
 
 if [ "$START_SERVER" -eq 1 ]; then
-  # 检查是否为云端 API 模型（不含 .gguf 后缀）
-  case "$LLM_MODEL_NAME" in
-    *.gguf)
-      # 本地模型，继续启动 llama-server
-      ;;
-    *)
-      # 云端 API 模型，跳过 llama-server 启动
-      echo "Using cloud API model: $LLM_MODEL_NAME (skip local llama-server)"
-      exit 0
-      ;;
-  esac
+  # 跳过云端 API 模型 (不需要启动本地 llama-server)
+  if ! echo "$LLM_MODEL_NAME" | grep -q '\.gguf$'; then
+    echo "Using cloud API model ($LLM_MODEL_NAME), skip starting llama-server."
+    exit 0
+  fi
 
   # 检查是否已有 llama-server 在监听目标端口
   if [ -f "$LLAMA_PID_FILE" ]; then
@@ -172,7 +167,7 @@ if [ "$START_SERVER" -eq 1 ]; then
 
   # 内存预检: 模型文件大小 vs 可用内存 (需预留约 500MB 给系统)
   MODEL_SIZE_KB=$(du -k "$LLM_MODEL" | awk '{print $1}')
-  AVAIL_MEM_KB=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{print $2}')
+  AVAIL_MEM_KB=$( (grep MemAvailable /proc/meminfo 2>/dev/null || true) | awk '{print $2}')
   RESERVE_KB=524288  # 预留 512MB
   if [ -n "$AVAIL_MEM_KB" ] && [ "$MODEL_SIZE_KB" -gt $((AVAIL_MEM_KB - RESERVE_KB)) ]; then
     MODEL_SIZE_MB=$((MODEL_SIZE_KB / 1024))
