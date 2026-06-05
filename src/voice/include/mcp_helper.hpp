@@ -22,6 +22,7 @@ struct MCPConfig {
         "你是一个智能助手，可以使用工具帮助用户。请用中文回复。";
     std::string registry_url = "";
     int registry_poll_interval = 5;
+    std::vector<std::string> tools_whitelist;  // 若非空，仅暴露白名单中的工具
 
     struct ServerEntry {
         std::string name;

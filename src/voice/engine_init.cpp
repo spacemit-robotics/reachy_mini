@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>  // NOLINT(build/c++17)
 #include <iostream>
 #include <map>
 #include <memory>
@@ -139,9 +140,10 @@ void warmupTTS(std::shared_ptr<SpacemiT::TtsEngine> tts) {
 
 #ifdef USE_MCP
 
-void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::LLMService> &llm,
+void initMCP(const std::string &mcp_config_path_in, std::shared_ptr<spacemit_llm::LLMService> &llm,
             std::string &system_prompt, MCPInitResult &result, const std::string &cli_llm_url,
             const std::string &cli_llm_model) {
+    std::string mcp_config_path = mcp_config_path_in;
     if (mcp_config_path.empty()) {
         result.enabled = false;
         return;
@@ -157,13 +159,6 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
 
     result.enabled = true;
 
-    // 覆盖 system_prompt
-    if (!result.config.system_prompt.empty()) {
-        system_prompt = result.config.system_prompt;
-        llm->update_prompt(system_prompt);
-        std::cout << getTimestamp() << " [MCP] 已更新 system_prompt\n";
-    }
-
     // CLI 参数覆盖配置文件中的 LLM 设置
     if (!cli_llm_url.empty()) {
         result.config.url = cli_llm_url;
@@ -172,9 +167,80 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
         result.config.model = cli_llm_model;
     }
 
-    // 创建 MCPManager 和 MCPActionProvider
+    // 创建 MCPManager 和 MCPActionProvider，并检测小模型
+    // 小模型定义: 参数量 ≤3B 的模型，使用扁平 Schema 和精简工具集
+    bool is_small_model = false;
+    std::string model_name = result.config.model;
+    std::transform(model_name.begin(), model_name.end(), model_name.begin(), ::tolower);
+
+    // 精确匹配小模型标识，避免误匹配 13b/33b/q3_k_m 等
+    // 支持格式: "0.5b", "1.5b", "3b", ":0.5b", ":1.5b", ":3b", "-0.5b", "-1.5b", "-3b"
+    // 注意: pos == 0 (模型名以 tag 开头) 也被视为合法匹配，例如 "3b-instruct" 是小模型
+    auto is_small_model_tag = [](const std::string &name, const std::string &tag) -> bool {
+        size_t pos = name.find(tag);
+        if (pos == std::string::npos) return false;
+        // 检查 tag 前一个字符：必须是分隔符或字符串开头
+        // pos == 0 时表示模型名以 tag 开头，这是合法的小模型命名（如 "3b-instruct"）
+        if (pos > 0) {
+            char prev = name[pos - 1];
+            // "0.5b"/"1.5b" 的 tag 本身包含数字前缀，无需额外允许数字
+            // "3b" 前不能是数字，否则 "13b" 会误判
+            if (prev != ':' && prev != '-' && prev != '_' && prev != '.') {
+                return false;
+            }
+        }
+        // 检查 tag 后一个字符：必须是分隔符或字符串结尾
+        size_t end_pos = pos + tag.length();
+        if (end_pos < name.length()) {
+            char next = name[end_pos];
+            if (next != '-' && next != '_' && next != ':' && next != '.') {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (is_small_model_tag(model_name, "0.5b") ||
+        is_small_model_tag(model_name, "1.5b") ||
+        is_small_model_tag(model_name, "3b")) {
+        is_small_model = true;
+        std::cout << getTimestamp() << " [MCP] 检测到小模型: " << model_name << "，启用扁平 Schema" << std::endl;
+
+        // 尝试加载小模型专属配置（仅覆盖 system_prompt 和 tools_whitelist）
+        // 基于目录推导配置路径，而非字符串匹配
+        std::filesystem::path config_path(mcp_config_path);
+        std::filesystem::path small_config_path = config_path.parent_path() / "mcp_robot_small.json";
+
+        // 避免重复加载（如果用户已指定小模型配置）
+        if (config_path.filename() != "mcp_robot_small.json") {
+            std::cout << getTimestamp() << " [MCP] 尝试加载小模型专属配置: " << small_config_path.string() << std::endl;
+            MCPConfig small_config;
+            if (loadMCPConfig(small_config_path.string(), small_config)) {
+                // 仅覆盖 prompt 和白名单，保留原 config 的 servers/registry
+                if (!small_config.system_prompt.empty()) {
+                    result.config.system_prompt = small_config.system_prompt;
+                }
+                if (!small_config.tools_whitelist.empty()) {
+                    result.config.tools_whitelist = small_config.tools_whitelist;
+                }
+                std::cout << getTimestamp() << " [MCP] 成功加载小模型专属配置" << std::endl;
+            } else {
+                std::cout << getTimestamp() << " [MCP] 未找到小模型专属配置 (" << small_config_path.string()
+                    << ")，继续使用默认配置" << std::endl;
+            }
+        }
+    }
+
+    // 覆盖 system_prompt
+    if (!result.config.system_prompt.empty()) {
+        system_prompt = result.config.system_prompt;
+        llm->update_prompt(system_prompt);
+        std::cout << getTimestamp() << " [MCP] 已更新 system_prompt\n";
+    }
+
     result.manager = std::make_unique<mcp::MCPManager>();
-    result.action_provider = std::make_unique<MCPActionProvider>();
+    result.action_provider = std::make_unique<MCPActionProvider>(
+        is_small_model, result.config.tools_whitelist);
 
     // 注册工具变更回调：当外部 MCP 服务器上线/下线时，合并本地工具并更新 LLM 工具列表
     result.manager->onToolChange([&result](const std::vector<mcp::Tool> &tools) {
@@ -297,7 +363,9 @@ void initMCP(const std::string &mcp_config_path, std::shared_ptr<spacemit_llm::L
     if (!result.config.registry_url.empty()) {
         std::cout << getTimestamp() << " [MCP] 启动注册中心轮询: " << result.config.registry_url
                 << "\n";
-        result.registry_poll_thread = std::thread([&result, &updateToolsJson]() {
+        // 注意: updateToolsJson 是 initMCP 的局部 lambda，必须按值捕获 (拷贝)，
+        // 否则 initMCP 返回后引用悬空，导致 heap corruption → std::bad_alloc
+        result.registry_poll_thread = std::thread([&result, updateToolsJson]() {
             while (g_running) {
                 auto services = fetchServicesFromRegistry(result.config.registry_url);
 

@@ -70,7 +70,7 @@ void voice_ctl_cleanup(void);
 void voice_ctl_set_camera_id(int camera_id);
 
 /**
- * @brief 暂停所有运行中的 tracker (释放 NPU 给语音链路使用)
+ * @brief 暂停所有运行中的 tracker (释放 TCM 给语音链路使用)
  */
 void voice_ctl_tracker_pause_all(void);
 
@@ -85,6 +85,20 @@ void voice_ctl_tracker_resume_all(void);
  * @return bool true 表示正在运行
  */
 bool voice_ctl_tracker_any_running(void);
+
+/**
+ * @brief 执行 LLM 自主编排的动作序列
+ *
+ * @param json_str LLM 输出的 JSON 动作序列字符串
+ * @return int 0 成功, <0 失败
+ */
+int voice_ctl_execute_choreography(const char *json_str);
+
+/**
+ * @brief 获取当前目标位姿 (用于 LLM 状态感知)
+ */
+void voice_ctl_get_current_pose(float *roll, float *pitch, float *yaw,
+                                float *body, float *ant_r, float *ant_l);
 
 #ifdef __cplusplus
 }

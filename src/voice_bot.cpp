@@ -73,71 +73,91 @@ static const char STATE_FILE[] = "/tmp/reachy_voice_bot.state";
 static const char LOG_FILE[] = "/tmp/reachy_voice_bot.log";
 static const char LOG_FILE_OLD[] = "/tmp/reachy_voice_bot.log.old";
 static const char LLAMA_PID_FILE[] = "/tmp/reachy_llama_server.pid";
-static const size_t LOG_MAX_SIZE = 2 * 1024 * 1024;  // 2MB 日志上限
+static const size_t LOG_MAX_SIZE = 2 * 1024 * 1024; // 2MB 日志上限
 
-static pid_t get_stored_pid() {
+static pid_t get_stored_pid()
+{
     std::ifstream f(PID_FILE);
-    if (!f.is_open()) return 0;
+    if (!f.is_open())
+        return 0;
     pid_t pid = 0;
     f >> pid;
     return pid;
 }
 
-static bool is_daemon_running() {
+static bool is_daemon_running()
+{
     pid_t pid = get_stored_pid();
-    if (pid <= 0) return false;
+    if (pid <= 0)
+        return false;
     return (kill(pid, 0) == 0);
 }
 
-static void write_state(const std::string &state) {
+static void write_state(const std::string &state)
+{
     std::ofstream f(STATE_FILE, std::ios::trunc);
-    if (f.is_open()) f << state << std::endl;
+    if (f.is_open())
+        f << state << std::endl;
 }
 
-static std::string read_state() {
+static std::string read_state()
+{
     std::ifstream f(STATE_FILE);
-    if (!f.is_open()) return "未知";
+    if (!f.is_open())
+        return "未知";
     std::string s;
     std::getline(f, s);
     return s.empty() ? "未知" : s;
 }
 
 // 根据动作 ID 更新运行状态文件
-static void update_mode_state(int action) {
-    if (action == 13)      write_state("人脸跟随");
-    else if (action == 15) write_state("手势跟踪");
-    else if (action == 14 || action == 16) write_state("对话模式");
+static void update_mode_state(int action)
+{
+    if (action == 13)
+        write_state("人脸跟随");
+    else if (action == 15)
+        write_state("手势跟踪");
+    else if (action == 14 || action == 16)
+        write_state("对话模式");
 }
 
-static void kill_pid(pid_t pid) {
+static void kill_pid(pid_t pid)
+{
     kill(pid, SIGTERM);
-    for (int i = 0; i < 50; ++i) {
+    for (int i = 0; i < 50; ++i)
+    {
         usleep(100000);
-        if (kill(pid, 0) != 0) return;
+        if (kill(pid, 0) != 0)
+            return;
     }
     kill(pid, SIGKILL);
     usleep(200000);
 }
 
 // 终止由本程序启动的 llama-server 进程
-static void stop_llama_server() {
+static void stop_llama_server()
+{
     std::ifstream f(LLAMA_PID_FILE);
-    if (!f.is_open()) return;
+    if (!f.is_open())
+        return;
     pid_t pid = 0;
     f >> pid;
     f.close();
-    if (pid > 0 && kill(pid, 0) == 0) {
+    if (pid > 0 && kill(pid, 0) == 0)
+    {
         std::cout << getTimestamp()
-            << " [LLM] 终止 llama-server (PID: " << pid << ")\n";
+                << " [LLM] 终止 llama-server (PID: " << pid << ")\n";
         kill_pid(pid);
     }
     unlink(LLAMA_PID_FILE);
 }
 
-static void daemon_cleanup() {
+static void daemon_cleanup()
+{
     // 仅清理属于当前进程的 PID 文件
     pid_t stored = get_stored_pid();
-    if (stored == getpid()) {
+    if (stored == getpid())
+    {
         unlink(PID_FILE);
         unlink(STATE_FILE);
         // 同步终止由本进程启动的 llama-server
@@ -146,19 +166,23 @@ static void daemon_cleanup() {
 }
 
 // 日志轮转: 若日志超过上限则重命名为 .old，保留一份历史
-static void rotate_log() {
+static void rotate_log()
+{
     struct stat st;
-    if (stat(LOG_FILE, &st) == 0 && static_cast<size_t>(st.st_size) > LOG_MAX_SIZE) {
+    if (stat(LOG_FILE, &st) == 0 && static_cast<size_t>(st.st_size) > LOG_MAX_SIZE)
+    {
         rename(LOG_FILE, LOG_FILE_OLD);
     }
 }
 
-static void do_stop() {
+static void do_stop()
+{
     pid_t pid = get_stored_pid();
     bool stopped = false;
 
     // 1. 通过 PID 文件终止
-    if (pid > 0 && kill(pid, 0) == 0) {
+    if (pid > 0 && kill(pid, 0) == 0)
+    {
         kill_pid(pid);
         stopped = true;
         std::cout << "● reachy_voice_bot (PID: " << pid << ") 已停止" << std::endl;
@@ -166,19 +190,26 @@ static void do_stop() {
 
     // 2. 通过进程名查找残留进程 (防止 PID 文件被覆盖后无法停止旧进程)
     FILE *fp = popen("pidof reachy_voice_bot 2>/dev/null", "r");
-    if (fp) {
+    if (fp)
+    {
         char buf[256] = {0};
-        if (fgets(buf, sizeof(buf), fp)) {
+        if (fgets(buf, sizeof(buf), fp))
+        {
             // pidof 返回空格分隔的 PID 列表
             char *saveptr = NULL;
             char *token = strtok_r(buf, " \n", &saveptr);
-            while (token) {
+            while (token)
+            {
                 pid_t p = (pid_t)atoi(token);
-                if (p > 0 && p != getpid() && kill(p, 0) == 0) {
+                if (p > 0 && p != getpid() && kill(p, 0) == 0)
+                {
                     kill_pid(p);
-                    if (!stopped) {
+                    if (!stopped)
+                    {
                         std::cout << "● reachy_voice_bot (PID: " << p << ") 已停止" << std::endl;
-                    } else {
+                    }
+                    else
+                    {
                         std::cout << "● 清理残留进程 (PID: " << p << ")" << std::endl;
                     }
                     stopped = true;
@@ -189,7 +220,8 @@ static void do_stop() {
         pclose(fp);
     }
 
-    if (!stopped) {
+    if (!stopped)
+    {
         std::cout << "○ 未发现正在运行的 reachy_voice_bot 进程" << std::endl;
     }
 
@@ -200,12 +232,16 @@ static void do_stop() {
     stop_llama_server();
 }
 
-static void do_status() {
-    if (is_daemon_running()) {
+static void do_status()
+{
+    if (is_daemon_running())
+    {
         std::cout << "● reachy_voice_bot 状态: 运行中" << std::endl;
         std::cout << "  PID: " << get_stored_pid() << std::endl;
         std::cout << "  模式: " << read_state() << std::endl;
-    } else {
+    }
+    else
+    {
         std::cout << "○ reachy_voice_bot 状态: 未知 (程序未启动)" << std::endl;
     }
 }
@@ -214,7 +250,8 @@ static void do_status() {
 // 参数配置
 // ============================================================================
 
-struct Config {
+struct Config
+{
     std::string tts_type = "matcha:zh";
     bool list_voices = false;
     std::string llm_model = "qwen2.5:0.5b";
@@ -223,7 +260,7 @@ struct Config {
     int output_device = -1;
     float vad_threshold = 0.8f;
     float silence_duration = 0.5f;
-    int max_tokens = 150;
+    int max_tokens = 512;
     bool list_devices = false;
 
     // Audio config (independent capture/playback)
@@ -262,61 +299,97 @@ struct Config {
     bool output_device_set = false;
 };
 
-Config parseArgs(int argc, char *argv[]) {
+Config parseArgs(int argc, char *argv[])
+{
     Config cfg;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--tts") == 0 && i + 1 < argc) {
+    for (int i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "--tts") == 0 && i + 1 < argc)
+        {
             cfg.tts_type = argv[++i];
             cfg.tts_set = true;
-        } else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc)
+        {
             cfg.llm_model = argv[++i];
             cfg.llm_model_set = true;
-        } else if (
+        }
+        else if (
             (strcmp(argv[i], "--llm-url") == 0 || strcmp(argv[i], "--llm_url") == 0) &&
-            i + 1 < argc) {
+            i + 1 < argc)
+        {
             cfg.llm_url = argv[++i];
-        } else if (
+        }
+        else if (
             (strcmp(argv[i], "--input-device") == 0 || strcmp(argv[i], "-i") == 0) &&
-            i + 1 < argc) {
+            i + 1 < argc)
+        {
             cfg.input_device = std::stoi(argv[++i]);
             cfg.input_device_set = true;
-        } else if (
+        }
+        else if (
             (strcmp(argv[i], "--output-device") == 0 || strcmp(argv[i], "-o") == 0) &&
-            i + 1 < argc) {
+            i + 1 < argc)
+        {
             cfg.output_device = std::stoi(argv[++i]);
             cfg.output_device_set = true;
-        } else if (strcmp(argv[i], "--list-devices") == 0 || strcmp(argv[i], "-l") == 0) {
+        }
+        else if (strcmp(argv[i], "--list-devices") == 0 || strcmp(argv[i], "-l") == 0)
+        {
             cfg.list_devices = true;
-        } else if (strcmp(argv[i], "--capture-rate") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--capture-rate") == 0 && i + 1 < argc)
+        {
             cfg.capture_rate = std::stoi(argv[++i]);
             cfg.audio_params_set = true;
-        } else if (strcmp(argv[i], "--capture-channels") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--capture-channels") == 0 && i + 1 < argc)
+        {
             cfg.capture_channels = std::stoi(argv[++i]);
             cfg.audio_params_set = true;
-        } else if (strcmp(argv[i], "--playback-rate") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--playback-rate") == 0 && i + 1 < argc)
+        {
             cfg.playback_rate = std::stoi(argv[++i]);
             cfg.audio_params_set = true;
-        } else if (strcmp(argv[i], "--playback-channels") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--playback-channels") == 0 && i + 1 < argc)
+        {
             cfg.playback_channels = std::stoi(argv[++i]);
             cfg.audio_params_set = true;
-        } else if (strcmp(argv[i], "--motor-port") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--motor-port") == 0 && i + 1 < argc)
+        {
             cfg.motor_port = argv[++i];
             cfg.motor_port_set = true;
-        } else if (strcmp(argv[i], "--camera-id") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--camera-id") == 0 && i + 1 < argc)
+        {
             cfg.camera_id = std::stoi(argv[++i]);
             cfg.camera_id_set = true;
-        } else if (strcmp(argv[i], "--save-audio") == 0) {
+        }
+        else if (strcmp(argv[i], "--save-audio") == 0)
+        {
             cfg.save_audio = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
                 cfg.audio_file = argv[++i];
             }
-        } else if (strcmp(argv[i], "--mcp-config") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--mcp-config") == 0 && i + 1 < argc)
+        {
             cfg.mcp_config_path = argv[++i];
-        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc)
+        {
             cfg.config_path = argv[++i];
-        } else if (strcmp(argv[i], "--list-voices") == 0) {
+        }
+        else if (strcmp(argv[i], "--list-voices") == 0)
+        {
             cfg.list_voices = true;
-        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+        }
+        else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
+        {
             std::cout << "用法: " << argv[0] << " {start|stop|status} [选项]\n";
             std::cout << "\n子命令:\n";
             std::cout << "  start                         后台启动 (守护进程模式)\n";
@@ -360,27 +433,36 @@ Config parseArgs(int argc, char *argv[]) {
 // 列出音频设备
 // ============================================================================
 
-void listAudioDevices() {
+void listAudioDevices()
+{
     std::cout << getTimestamp() << " ========================================\n";
     std::cout << getTimestamp() << "            可用音频设备\n";
     std::cout << getTimestamp() << " ========================================\n\n";
 
     std::cout << getTimestamp() << " 输入设备 (麦克风):\n";
     auto input_devices = SpacemitAudio::AudioCapture::ListDevices();
-    if (input_devices.empty()) {
+    if (input_devices.empty())
+    {
         std::cout << getTimestamp() << "   (无可用设备)\n";
-    } else {
-        for (const auto &dev : input_devices) {
+    }
+    else
+    {
+        for (const auto &dev : input_devices)
+        {
             std::cout << getTimestamp() << "   [" << dev.first << "] " << dev.second << "\n";
         }
     }
 
     std::cout << getTimestamp() << " \n输出设备 (扬声器):\n";
     auto output_devices = SpacemitAudio::AudioPlayer::ListDevices();
-    if (output_devices.empty()) {
+    if (output_devices.empty())
+    {
         std::cout << getTimestamp() << "   (无可用设备)\n";
-    } else {
-        for (const auto &dev : output_devices) {
+    }
+    else
+    {
+        for (const auto &dev : output_devices)
+        {
             std::cout << getTimestamp() << "   [" << dev.first << "] " << dev.second << "\n";
         }
     }
@@ -394,37 +476,45 @@ void listAudioDevices() {
 // 主程序
 // ============================================================================
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     // 提升 new_argv 作用域，防止守护进程模式下 argv 悬空指针
     std::vector<char *> new_argv;
-    bool is_daemon_child = false;  // 标记是否为 fork 出的守护子进程
+    bool is_daemon_child = false; // 标记是否为 fork 出的守护子进程
 
     // -------------------------------------------------------------------------
     // 守护进程管理: start / stop / status
     // -------------------------------------------------------------------------
-    if (argc >= 2) {
+    if (argc >= 2)
+    {
         std::string first_arg = argv[1];
-        if (first_arg == "stop") {
+        if (first_arg == "stop")
+        {
             do_stop();
             return 0;
         }
-        if (first_arg == "status") {
+        if (first_arg == "status")
+        {
             do_status();
             return 0;
         }
-        if (first_arg == "start") {
-            if (is_daemon_running()) {
+        if (first_arg == "start")
+        {
+            if (is_daemon_running())
+            {
                 std::cout << "● reachy_voice_bot 已在运行中 (PID: "
-                    << get_stored_pid() << ")" << std::endl;
+                        << get_stored_pid() << ")" << std::endl;
                 return 0;
             }
             // fork 守护进程
             pid_t pid = fork();
-            if (pid < 0) {
+            if (pid < 0)
+            {
                 perror("fork 失败");
                 return 1;
             }
-            if (pid > 0) {
+            if (pid > 0)
+            {
                 // 父进程：记录子进程 PID 并退出
                 std::ofstream pf(PID_FILE, std::ios::trunc);
                 pf << pid;
@@ -433,22 +523,25 @@ int main(int argc, char *argv[]) {
             }
             // 子进程：守护进程化
             setsid();
-            is_daemon_child = true;  // 标记为守护子进程，跳过后续互斥检查
+            is_daemon_child = true; // 标记为守护子进程，跳过后续互斥检查
             // 日志轮转 (超过 2MB 时保留为 .old)
             rotate_log();
             // 关闭 stdin，重定向 stdout/stderr 到日志文件
             freopen("/dev/null", "r", stdin);
-            if (!freopen(LOG_FILE, "a", stdout)) {
+            if (!freopen(LOG_FILE, "a", stdout))
+            {
                 perror("无法打开日志文件");
                 _exit(1);
             }
             freopen(LOG_FILE, "a", stderr);
             // 关闭继承的文件描述符 (3~1023)
-            for (int fd = 3; fd < 1024; ++fd) close(fd);
+            for (int fd = 3; fd < 1024; ++fd)
+                close(fd);
             // 移除 "start" 参数，让后续 parseArgs 正常工作
             // 构造新的 argv: argv[0], argv[2], argv[3], ...
             new_argv.push_back(argv[0]);
-            for (int i = 2; i < argc; ++i) {
+            for (int i = 2; i < argc; ++i)
+            {
                 new_argv.push_back(argv[i]);
             }
             argc = static_cast<int>(new_argv.size());
@@ -461,10 +554,11 @@ int main(int argc, char *argv[]) {
 
     // 互斥检查: 无论前台还是后台模式，若已有实例在运行则拒绝启动
     // 注意: 守护子进程跳过此检查 (父进程 fork 前已验证过)
-    if (!is_daemon_child && is_daemon_running()) {
+    if (!is_daemon_child && is_daemon_running())
+    {
         pid_t existing = get_stored_pid();
         std::cerr << "● reachy_voice_bot 已在运行中 (PID: " << existing
-                    << ")，请先执行 stop 后再启动" << std::endl;
+                << ")，请先执行 stop 后再启动" << std::endl;
         return 1;
     }
 
@@ -483,104 +577,38 @@ int main(int argc, char *argv[]) {
     write_state("初始化中");
 
     // -------------------------------------------------------------------------
-    // 自动下载模型 (LLM + 视觉模型)
-    // 通过可执行文件路径推导项目根目录，执行下载脚本
-    // -------------------------------------------------------------------------
-    {
-        // 推导项目根目录: exe 位于 <sdk_root>/output/staging/bin/
-        char exe_path[1024] = {0};
-        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-        if (exe_len > 0) {
-            exe_path[exe_len] = '\0';
-            std::string exe_str(exe_path);
-            std::string exe_dir = exe_str.substr(0, exe_str.rfind('/'));
-
-            // 尝试从 <sdk_root>/output/staging/bin/ 推导 sdk_root
-            std::string sdk_root;
-            // 检查 exe_dir 是否以 /output/staging/bin 结尾
-            const std::string staging_suffix = "/output/staging/bin";
-            if (exe_dir.size() > staging_suffix.size() &&
-                exe_dir.compare(exe_dir.size() - staging_suffix.size(),
-                                staging_suffix.size(), staging_suffix) == 0) {
-                sdk_root = exe_dir.substr(0, exe_dir.size() - staging_suffix.size());
-            } else {
-                // 回退: 假设 exe 在项目根目录下
-                sdk_root = exe_dir;
-            }
-
-            // 下载模型 + 启动 llama-server (脚本内部处理)
-            std::string model_script = sdk_root +
-                "/application/native/reachy_mini/config/download_face_gesture_models.sh";
-            if (access(model_script.c_str(), X_OK) == 0) {
-                std::cout << getTimestamp()
-                    << " [ModelSetup] 检查模型并启动 LLM 服务...\n";
-                bool is_local_llm = true;
-                if (!cfg.llm_url.empty()) {
-                    if (cfg.llm_url.find("127.0.0.1") == std::string::npos &&
-                        cfg.llm_url.find("localhost") == std::string::npos &&
-                        cfg.llm_url.find("0.0.0.0") == std::string::npos) {
-                        is_local_llm = false;
-                    }
-                }
-
-                std::string cmd = model_script;
-                if (is_local_llm) {
-                    cmd += " --start-server";
-                    // 传递模型名称 (来自命令行 --model 或配置文件)
-                    if (cfg.llm_model_set && !cfg.llm_model.empty()) {
-                        cmd += " --model " + cfg.llm_model;
-                    }
-                } else {
-                    std::cout << getTimestamp() << " [ModelSetup] 正在使用云端 LLM，仅下载视觉模型...\n";
-                }
-                // 传递配置文件路径，让脚本从中读取 llm.model
-                std::string cfg_for_script = cfg.config_path;
-#ifdef DEFAULT_CONFIG_PATH
-                if (cfg_for_script.empty()) {
-                    cfg_for_script = DEFAULT_CONFIG_PATH;
-                }
-#endif
-                if (!cfg_for_script.empty() &&
-                    access(cfg_for_script.c_str(), R_OK) == 0) {
-                    cmd += " --config " + cfg_for_script;
-                }
-                int ret = system(cmd.c_str());
-                if (ret != 0) {
-                    std::cerr << getTimestamp()
-                        << " [ModelSetup] 警告: 模型脚本返回非零: "
-                        << ret << "\n";
-                }
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // 加载配置文件 (优先级: 命令行 > 配置文件 > 自动探测)
     // -------------------------------------------------------------------------
     {
         std::string yaml_path = cfg.config_path;
-        if (yaml_path.empty()) {
+        if (yaml_path.empty())
+        {
             // 1. 优先使用编译时嵌入的绝对路径 (支持交叉编译时指定目标路径)
 #ifdef DEFAULT_CONFIG_PATH
             yaml_path = DEFAULT_CONFIG_PATH;
 #endif
             // 2. 若编译时路径不存在，回退到可执行文件同级目录
-            if (yaml_path.empty() || access(yaml_path.c_str(), R_OK) != 0) {
+            if (yaml_path.empty() || access(yaml_path.c_str(), R_OK) != 0)
+            {
                 char exe_buf[1024] = {0};
                 ssize_t len = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
-                if (len > 0) {
+                if (len > 0)
+                {
                     exe_buf[len] = '\0';
                     std::string exe_dir(exe_buf, std::string(exe_buf).rfind('/'));
                     std::string fallback = exe_dir + "/config/config_paras.yaml";
-                    if (access(fallback.c_str(), R_OK) == 0) {
+                    if (access(fallback.c_str(), R_OK) == 0)
+                    {
                         yaml_path = fallback;
                     }
                 }
             }
         }
-        if (!yaml_path.empty()) {
+        if (!yaml_path.empty())
+        {
             ConfigFromFile fc;
-            if (loadConfigFromYaml(yaml_path, fc)) {
+            if (loadConfigFromYaml(yaml_path, fc))
+            {
                 // 音频设备 (仅在 CLI 未指定时应用)
                 if (!cfg.input_device_set && fc.input_device != INT_MIN)
                     cfg.input_device = fc.input_device;
@@ -588,7 +616,8 @@ int main(int argc, char *argv[]) {
                     cfg.output_device = fc.output_device;
 
                 // 音频参数 (仅在 CLI 未显式指定时应用)
-                if (!cfg.audio_params_set) {
+                if (!cfg.audio_params_set)
+                {
                     if (fc.capture_rate != INT_MIN && fc.capture_rate > 0)
                         cfg.capture_rate = fc.capture_rate;
                     if (fc.capture_channels != INT_MIN && fc.capture_channels > 0)
@@ -638,50 +667,148 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (cfg.list_devices) {
+    if (cfg.list_devices)
+    {
         listAudioDevices();
         return 0;
     }
 
-    if (cfg.list_voices) {
+    if (cfg.list_voices)
+    {
         printVoiceList();
         return 0;
     }
 
-    if (cfg.llm_url.empty()) {
+    if (cfg.llm_url.empty())
+    {
         std::cerr << "错误: 必须通过 --llm-url 指定 LLM API 地址\n";
         return 1;
     }
 
+    // -------------------------------------------------------------------------
+    // 自动下载模型 (LLM + 视觉模型)
+    // 通过可执行文件路径推导项目根目录，执行下载脚本
+    // -------------------------------------------------------------------------
+    {
+        // 推导项目根目录: exe 位于 <sdk_root>/output/staging/bin/
+        char exe_path[1024] = {0};
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0)
+        {
+            exe_path[exe_len] = '\0';
+            std::string exe_str(exe_path);
+            std::string exe_dir = exe_str.substr(0, exe_str.rfind('/'));
+
+            // 尝试从 <sdk_root>/output/staging/bin/ 推导 sdk_root
+            std::string sdk_root;
+            // 检查 exe_dir 是否以 /output/staging/bin 结尾
+            const std::string staging_suffix = "/output/staging/bin";
+            if (exe_dir.size() > staging_suffix.size() &&
+                exe_dir.compare(exe_dir.size() - staging_suffix.size(),
+                                staging_suffix.size(), staging_suffix) == 0)
+            {
+                sdk_root = exe_dir.substr(0, exe_dir.size() - staging_suffix.size());
+            }
+            else
+            {
+                // 回退: 假设 exe 在项目根目录下
+                sdk_root = exe_dir;
+            }
+
+            // 下载模型 + 启动 llama-server (脚本内部处理)
+            std::string model_script = sdk_root +
+                "/application/native/reachy_mini/config/download_face_gesture_models.sh";
+            if (access(model_script.c_str(), X_OK) == 0)
+            {
+                std::cout << getTimestamp()
+                    << " [ModelSetup] 检查模型并启动 LLM 服务...\n";
+                bool is_local_llm = true;
+                if (!cfg.llm_url.empty())
+                {
+                    if (cfg.llm_url.find("127.0.0.1") == std::string::npos &&
+                        cfg.llm_url.find("localhost") == std::string::npos &&
+                        cfg.llm_url.find("0.0.0.0") == std::string::npos)
+                    {
+                        is_local_llm = false;
+                    }
+                }
+
+                std::string cmd = model_script;
+                if (is_local_llm)
+                {
+                    cmd += " --start-server";
+                    // 传递模型名称 (来自命令行 --model 或配置文件)
+                    if (cfg.llm_model_set && !cfg.llm_model.empty())
+                    {
+                        cmd += " --model " + cfg.llm_model;
+                    }
+                }
+                else
+                {
+                    std::cout << getTimestamp() << " [ModelSetup] 正在使用云端 LLM，仅下载视觉模型...\n";
+                }
+                // 传递配置文件路径，让脚本从中读取 llm.model
+                std::string cfg_for_script = cfg.config_path;
+#ifdef DEFAULT_CONFIG_PATH
+                if (cfg_for_script.empty())
+                {
+                    cfg_for_script = DEFAULT_CONFIG_PATH;
+                }
+#endif
+                if (!cfg_for_script.empty() &&
+                    access(cfg_for_script.c_str(), R_OK) == 0)
+                {
+                    cmd += " --config " + cfg_for_script;
+                }
+                int ret = system(cmd.c_str());
+                if (ret != 0)
+                {
+                    std::cerr << getTimestamp()
+                        << " [ModelSetup] 警告: 模型脚本返回非零: "
+                        << ret << "\n";
+                }
+            }
+        }
+    }
+
     // 自动探测 Reachy Mini 多媒体设备 (未指定设备 ID 时启用)
-    if (cfg.input_device < 0 || cfg.output_device < 0 || cfg.camera_id == 0) {
+    if (cfg.input_device < 0 || cfg.output_device < 0 || cfg.camera_id == 0)
+    {
         ReachyDeviceInfo dev_info;
-        if (detectReachyMiniDevices(dev_info)) {
-            if (dev_info.audio_card_id >= 0) {
+        if (detectReachyMiniDevices(dev_info))
+        {
+            if (dev_info.audio_card_id >= 0)
+            {
                 if (cfg.input_device < 0)
                     cfg.input_device = dev_info.audio_card_id;
                 if (cfg.output_device < 0)
                     cfg.output_device = dev_info.audio_card_id;
 
                 // 查询声卡硬件参数 (声道数、采样率)
-                if (!cfg.audio_params_set && queryAudioHardwareConfig(dev_info)) {
-                    if (dev_info.hw_channels > 0) {
+                if (!cfg.audio_params_set && queryAudioHardwareConfig(dev_info))
+                {
+                    if (dev_info.hw_channels > 0)
+                    {
                         cfg.capture_channels = dev_info.hw_channels;
                         cfg.playback_channels = dev_info.hw_channels;
                     }
-                    if (dev_info.hw_sample_rate > 0) {
+                    if (dev_info.hw_sample_rate > 0)
+                    {
                         cfg.capture_rate = dev_info.hw_sample_rate;
                         cfg.playback_rate = dev_info.hw_sample_rate;
                     }
                 }
             }
-            if (dev_info.camera_id >= 0 && cfg.camera_id == 0) {
+            if (dev_info.camera_id >= 0 && cfg.camera_id == 0)
+            {
                 cfg.camera_id = dev_info.camera_id;
             }
             printDeviceInfo(dev_info);
             // 初始化声卡音量 (PCM,0=100%, PCM,1=80%)
             initAudioVolume(dev_info);
-        } else {
+        }
+        else
+        {
             std::cerr << "[DeviceDetect] 警告: 未探测到 Reachy Mini 设备，使用系统默认\n";
         }
     }
@@ -700,7 +827,8 @@ int main(int argc, char *argv[]) {
     std::cout << getTimestamp() << " ========================================\n\n";
 
     // 初始化电机控制模块
-    if (voice_ctl_init(cfg.motor_port.c_str(), 0.0f) < 0) {
+    if (voice_ctl_init(cfg.motor_port.c_str(), 0.0f) < 0)
+    {
         std::cerr << getTimestamp() << " 警告: 电机初始化失败, 无效外设 (" << cfg.motor_port << ")，将以无电机模式运行\n";
     }
     voice_ctl_set_camera_id(cfg.camera_id);
@@ -739,7 +867,8 @@ int main(int argc, char *argv[]) {
 
     // 初始化录音重采样器（capture_rate != 16kHz 时使用）
     std::unique_ptr<Resampler> capture_resampler;
-    if (cfg.capture_rate != 16000) {
+    if (cfg.capture_rate != 16000)
+    {
         Resampler::Config rconf;
         rconf.input_sample_rate = cfg.capture_rate;
         rconf.output_sample_rate = 16000;
@@ -748,15 +877,18 @@ int main(int argc, char *argv[]) {
             ? ResampleMethod::LINEAR_DOWNSAMPLE
             : ResampleMethod::LINEAR_UPSAMPLE;
         capture_resampler = std::make_unique<Resampler>(rconf);
-        if (!capture_resampler->initialize()) {
-            std::cerr << "\n" << getTimestamp() << " 错误: 录音重采样器初始化失败\n";
+        if (!capture_resampler->initialize())
+        {
+            std::cerr << "\n"
+                << getTimestamp() << " 错误: 录音重采样器初始化失败\n";
             return 1;
         }
     }
 
     // 初始化播放重采样器（TTS 采样率 != 播放采样率时使用）
     std::unique_ptr<Resampler> playback_resampler;
-    if (tts_sample_rate != cfg.playback_rate) {
+    if (tts_sample_rate != cfg.playback_rate)
+    {
         Resampler::Config rconf;
         rconf.input_sample_rate = tts_sample_rate;
         rconf.output_sample_rate = cfg.playback_rate;
@@ -765,16 +897,21 @@ int main(int argc, char *argv[]) {
             ? ResampleMethod::LINEAR_UPSAMPLE
             : ResampleMethod::LINEAR_DOWNSAMPLE;
         playback_resampler = std::make_unique<Resampler>(rconf);
-        if (!playback_resampler->initialize()) {
-            std::cerr << "\n" << getTimestamp() << " 错误: 播放重采样器初始化失败\n";
+        if (!playback_resampler->initialize())
+        {
+            std::cerr << "\n"
+                << getTimestamp() << " 错误: 播放重采样器初始化失败\n";
             return 1;
         }
     }
 
     std::cout << " OK\n";
-    if (cfg.capture_rate == 16000 && cfg.capture_channels == 1) {
+    if (cfg.capture_rate == 16000 && cfg.capture_channels == 1)
+    {
         std::cout << getTimestamp() << " 录音管道: 16kHz/1ch -> 直连 VAD/STT (零重采样)\n";
-    } else {
+    }
+    else
+    {
         std::cout << getTimestamp() << " 录音管道: " << cfg.capture_rate << "Hz/"
             << cfg.capture_channels << "ch -> ";
         if (cfg.capture_channels > 1)
@@ -783,9 +920,12 @@ int main(int argc, char *argv[]) {
             std::cout << "重采样->16kHz -> ";
         std::cout << "VAD/STT\n";
     }
-    if (tts_sample_rate == cfg.playback_rate) {
+    if (tts_sample_rate == cfg.playback_rate)
+    {
         std::cout << getTimestamp() << " 播放管道: TTS(" << tts_sample_rate << "Hz) -> 直连播放\n";
-    } else {
+    }
+    else
+    {
         std::cout << getTimestamp() << " 播放管道: TTS(" << tts_sample_rate << "Hz) -> 重采样->"
             << cfg.playback_rate << "Hz -> 播放\n";
     }
@@ -795,7 +935,8 @@ int main(int argc, char *argv[]) {
     // 6. 初始化 MCP (可选)
     // -------------------------------------------------------------------------
 #ifdef USE_MCP
-    if (cfg.mcp_config_path.empty()) {
+    if (cfg.mcp_config_path.empty())
+    {
 #ifdef DEFAULT_MCP_CONFIG_PATH
         cfg.mcp_config_path = DEFAULT_MCP_CONFIG_PATH;
         std::cout << getTimestamp() << " [MCP] 使用默认配置文件: " << cfg.mcp_config_path << "\n";
@@ -804,7 +945,7 @@ int main(int argc, char *argv[]) {
     MCPInitResult mcp;
     initMCP(
         cfg.mcp_config_path, llm, system_prompt, mcp, cfg.llm_url,
-        cfg.llm_model_set ? cfg.llm_model : "");
+        cfg.llm_model);
 #endif
 
     // -------------------------------------------------------------------------
@@ -814,15 +955,17 @@ int main(int argc, char *argv[]) {
     std::mutex playback_mutex;
     std::condition_variable playback_cv;
     std::atomic<bool> is_playing{false};
-    std::atomic<bool> playback_paused{false};  // 舞蹈期间暂停播放线程
+    std::atomic<bool> playback_paused{false}; // 舞蹈期间暂停播放线程
 
-    if (!player.Start(cfg.playback_rate, cfg.playback_channels)) {
+    if (!player.Start(cfg.playback_rate, cfg.playback_channels))
+    {
         std::cerr << getTimestamp() << " 错误: 无法启动播放设备\n";
         return 1;
     }
 
     // 播放线程：从队列取数据写入 AudioPlayer，队列空时写静音防止 ALSA XRUN
-    std::thread playback_thread([&]() {
+    std::thread playback_thread([&]()
+                                {
         const size_t silence_frames = cfg.playback_rate / 50;  // 20ms
         const size_t silence_bytes = silence_frames * cfg.playback_channels * sizeof(int16_t);
         const std::vector<uint8_t> silence(silence_bytes, 0);
@@ -858,39 +1001,51 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-        }
-    });
+        } });
 
     // 入队播放数据：float mono -> resample -> expand channels -> PCM16 bytes ->
     // enqueue
-    auto enqueuePlayback = [&](const std::vector<float> &float_samples, int src_rate) {
+    auto enqueuePlayback = [&](const std::vector<float> &float_samples, int src_rate)
+    {
         std::vector<float> resampled;
-        if (src_rate != cfg.playback_rate && playback_resampler) {
+        if (src_rate != cfg.playback_rate && playback_resampler)
+        {
             resampled = playback_resampler->process(float_samples);
-        } else {
+        }
+        else
+        {
             resampled = float_samples;
         }
 
         size_t total_samples;
-        if (cfg.playback_channels > 1) {
+        if (cfg.playback_channels > 1)
+        {
             total_samples = resampled.size() * cfg.playback_channels;
-        } else {
+        }
+        else
+        {
             total_samples = resampled.size();
         }
 
         std::vector<uint8_t> pcm_bytes(total_samples * 2);
         int16_t *out = reinterpret_cast<int16_t *>(pcm_bytes.data());
 
-        if (cfg.playback_channels > 1) {
-            for (size_t i = 0; i < resampled.size(); ++i) {
+        if (cfg.playback_channels > 1)
+        {
+            for (size_t i = 0; i < resampled.size(); ++i)
+            {
                 int16_t sample =
                     static_cast<int16_t>(std::clamp(resampled[i], -1.0f, 1.0f) * 32767.0f);
-                for (int ch = 0; ch < cfg.playback_channels; ++ch) {
+                for (int ch = 0; ch < cfg.playback_channels; ++ch)
+                {
                     out[i * cfg.playback_channels + ch] = sample;
                 }
             }
-        } else {
-            for (size_t i = 0; i < resampled.size(); ++i) {
+        }
+        else
+        {
+            for (size_t i = 0; i < resampled.size(); ++i)
+            {
                 out[i] = static_cast<int16_t>(std::clamp(resampled[i], -1.0f, 1.0f) * 32767.0f);
             }
         }
@@ -899,7 +1054,8 @@ int main(int argc, char *argv[]) {
             const size_t chunk_bytes =
                 (cfg.playback_rate / 50) * cfg.playback_channels * sizeof(int16_t);
             std::lock_guard<std::mutex> lock(playback_mutex);
-            for (size_t offset = 0; offset < pcm_bytes.size(); offset += chunk_bytes) {
+            for (size_t offset = 0; offset < pcm_bytes.size(); offset += chunk_bytes)
+            {
                 size_t len = std::min(chunk_bytes, pcm_bytes.size() - offset);
                 playback_queue.push(
                     std::vector<uint8_t>(
@@ -909,7 +1065,8 @@ int main(int argc, char *argv[]) {
         playback_cv.notify_one();
     };
 
-    auto clearPlayback = [&]() {
+    auto clearPlayback = [&]()
+    {
         {
             std::lock_guard<std::mutex> lock(playback_mutex);
             std::queue<std::vector<uint8_t>> empty;
@@ -952,7 +1109,8 @@ int main(int argc, char *argv[]) {
     pipeline_ctx.tts_sample_rate = tts_sample_rate;
     pipeline_ctx.system_prompt = system_prompt;
     pipeline_ctx.enqueue_playback = enqueuePlayback;
-    pipeline_ctx.is_playing = [&]() { return is_playing.load(); };
+    pipeline_ctx.is_playing = [&]()
+    { return is_playing.load(); };
     pipeline_ctx.clear_playback = clearPlayback;
     pipeline_ctx.audio_buffer = &audio_buffer;
     pipeline_ctx.buffer_mutex = &buffer_mutex;
@@ -962,16 +1120,20 @@ int main(int argc, char *argv[]) {
     pipeline_ctx.vad_frame_buffer = &vad_frame_buffer;
     pipeline_ctx.pre_buffer = &pre_buffer;
 #ifdef USE_MCP
-    PendingDance pending_dance;  // 待处理的舞蹈动作标志
+    PendingDance pending_dance; // 待处理的舞蹈动作标志
     pipeline_ctx.mcp_manager = mcp.manager.get();
-    pipeline_ctx.action_provider = mcp.action_provider.get();  // 新增
+    pipeline_ctx.action_provider = mcp.action_provider.get(); // 新增
     pipeline_ctx.llm_tools_json = &mcp.llm_tools_json;
     pipeline_ctx.tools_mutex = &mcp.tools_mutex;
     pipeline_ctx.conversation_messages = &mcp.conversation_messages;
     pipeline_ctx.conversation_mutex = &mcp.conversation_mutex;
     pipeline_ctx.mcp_enabled = mcp.enabled;
     pipeline_ctx.pending_dance = &pending_dance;
-    if (mcp.action_provider) {
+    std::string model_lower = cfg.llm_model;
+    std::transform(model_lower.begin(), model_lower.end(), model_lower.begin(), ::tolower);
+    pipeline_ctx.is_05b_model = (model_lower.find("0.5b") != std::string::npos);
+    if (mcp.action_provider)
+    {
         mcp.action_provider->setPendingDance(&pending_dance);
     }
 #endif
@@ -990,7 +1152,8 @@ int main(int argc, char *argv[]) {
     // -------------------------------------------------------------------------
     // 设置录音回调
     // -------------------------------------------------------------------------
-    capture.SetCallback([&](const uint8_t *data, size_t size) {
+    capture.SetCallback([&](const uint8_t *data, size_t size)
+                        {
         if (!g_running)
             return;
 
@@ -1140,6 +1303,13 @@ int main(int argc, char *argv[]) {
                         lock.unlock();
 
                         std::cout << getTimestamp() << " [ASR] 开始识别...\n";
+                        // result
+                        //     struct ChatResult {
+                        //     std::string content;           // LLM 输出的纯文本部分
+                        //     std::string tool_calls_json;   // LLM 输出的 tool_calls JSON（若有）
+                        //     bool has_tool_calls;           // 是否包含工具调用
+                        //     std::string error;             // 错误信息
+                        // };
                         auto result = asr->Recognize(audio_to_process, 16000);
                         if (result && !result->IsEmpty()) {
                             std::string text = result->GetText();
@@ -1220,6 +1390,18 @@ int main(int argc, char *argv[]) {
                                         }
                                         std::cout << getTimestamp()
                                             << " [关键词命中] 语音回复: \"" << reply << "\"\n";
+
+#ifdef USE_MCP
+                                        if (pipeline_ctx.mcp_enabled) {
+                                            std::lock_guard<std::mutex> lock(*pipeline_ctx.conversation_mutex);
+                                            pipeline_ctx.conversation_messages->push_back(
+                                                spacemit_llm::ChatMessage::User(text));
+                                            pipeline_ctx.conversation_messages->push_back(
+                                                spacemit_llm::ChatMessage::Assistant(reply));
+                                            pipeline_ctx.conversation_messages->push_back(
+                                                spacemit_llm::ChatMessage::System("[已通过硬件指令直接执行动作: " + keyword_str + "]"));
+                                        }
+#endif
 
                                         auto tts_result = pipeline_ctx.tts->Call(reply);
                                         if (tts_result && tts_result->IsSuccess()) {
@@ -1432,8 +1614,7 @@ int main(int argc, char *argv[]) {
                     pre_buffer.pop_front();
                 }
             }
-        }
-    });
+        } });
 
     // -------------------------------------------------------------------------
     // 开始对话
@@ -1443,8 +1624,15 @@ int main(int argc, char *argv[]) {
     // 传入 tools schema 和 conversation_messages（含 system prompt）确保完整预热
 #ifdef USE_MCP
     {
-        std::lock_guard<std::mutex> lock(mcp.conversation_mutex);
-        warmupLLM(llm, mcp.llm_tools_json, &mcp.conversation_messages);
+        // 先在 tools_mutex 下拷贝一份 tools_json 快照，避免与 onToolChange 回调
+        // 并发写入 llm_tools_json 产生数据竞争 (torn read → std::bad_alloc)
+        std::string tools_snapshot;
+        {
+            std::lock_guard<std::mutex> tlock(mcp.tools_mutex);
+            tools_snapshot = mcp.llm_tools_json;
+        }
+        std::lock_guard<std::mutex> clock(mcp.conversation_mutex);
+        warmupLLM(llm, tools_snapshot, &mcp.conversation_messages);
     }
 #else
     warmupLLM(llm, "", nullptr);
@@ -1456,11 +1644,13 @@ int main(int argc, char *argv[]) {
         std::string greeting = "欢迎使用 Reachy mini 应用，请开始对话吧";
         std::cout << getTimestamp() << " [开机问候] " << greeting << "\n";
         auto tts_greeting = tts->Call(greeting);
-        if (tts_greeting && tts_greeting->IsSuccess()) {
+        if (tts_greeting && tts_greeting->IsSuccess())
+        {
             auto audio_data = tts_greeting->GetAudioData();
             enqueuePlayback(pcm16BytesToFloat(audio_data), tts_sample_rate);
             // 等待问候语播放完成再启动录音
-            while (is_playing.load() && g_running) {
+            while (is_playing.load() && g_running)
+            {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
         }
@@ -1468,9 +1658,11 @@ int main(int argc, char *argv[]) {
     }
 
     // 录音在问候语播放完成后再启动，避免误识别用户未开口的声音
-    std::cout << getTimestamp() << " [等待语音输入...]\n" << std::flush;
+    std::cout << getTimestamp() << " [等待语音输入...]\n"
+        << std::flush;
 
-    if (!capture.Start(cfg.capture_rate, cfg.capture_channels)) {
+    if (!capture.Start(cfg.capture_rate, cfg.capture_channels))
+    {
         std::cerr << getTimestamp() << " 错误: 无法启动录音设备\n";
         player.Stop();
         player.Close();
@@ -1480,13 +1672,15 @@ int main(int argc, char *argv[]) {
     // 所有初始化完成，切换为对话模式
     write_state("对话模式");
 
-    while (g_running) {
+    while (g_running)
+    {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     {
         std::lock_guard<std::mutex> lock(g_process_thread_mutex);
-        if (g_process_thread && g_process_thread->joinable()) {
+        if (g_process_thread && g_process_thread->joinable())
+        {
             g_process_thread->join();
         }
     }
@@ -1496,24 +1690,29 @@ int main(int argc, char *argv[]) {
 
     player.Stop();
     playback_cv.notify_all();
-    if (playback_thread.joinable()) {
+    if (playback_thread.joinable())
+    {
         playback_thread.join();
     }
     player.Close();
 
 #ifdef USE_MCP
-    if (mcp.enabled) {
-        if (mcp.registry_poll_thread.joinable()) {
+    if (mcp.enabled)
+    {
+        if (mcp.registry_poll_thread.joinable())
+        {
             mcp.registry_poll_thread.join();
         }
-        if (mcp.manager) {
+        if (mcp.manager)
+        {
             mcp.manager->stopAll();
         }
         std::cout << getTimestamp() << " [MCP] 已清理\n";
     }
 #endif
 
-    if (cfg.save_audio && !recorded_audio.empty()) {
+    if (cfg.save_audio && !recorded_audio.empty())
+    {
         std::cout << getTimestamp() << " [保存音频] " << cfg.audio_file << " ("
             << recorded_audio.size() << " samples, "
             << (recorded_audio.size() / 16000.0f) << " 秒)\n";
@@ -1534,6 +1733,7 @@ int main(int argc, char *argv[]) {
     // 终止由本程序启动的 llama-server
     stop_llama_server();
 
-    std::cout << "\n" << getTimestamp() << " [已退出]\n";
+    std::cout << "\n"
+        << getTimestamp() << " [已退出]\n";
     return 0;
 }

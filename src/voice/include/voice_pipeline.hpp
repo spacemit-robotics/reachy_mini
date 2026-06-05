@@ -59,8 +59,10 @@ struct VoicePipelineContext {
     std::mutex *conversation_mutex = nullptr;
     bool mcp_enabled = false;
     PendingDance *pending_dance = nullptr;  // 待处理的舞蹈动作
+    bool is_05b_model = false;
 #endif
 };
+
 
 void processText(VoicePipelineContext &ctx, const std::string &text);
 

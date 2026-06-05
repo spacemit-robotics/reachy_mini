@@ -16,6 +16,7 @@
 #include "../talent_show/audio/audio_player.h"
 #include "../talent_show/dance_interface.h"
 #include "../talent_show/dance_player.h"
+#include "action_executor.h"
 #include "motion_api.h"
 #include "motor_controller.h"
 #include "tracker_manager.h"
@@ -108,6 +109,7 @@ static const CommandMapping CMD_TABLE[] = {
     {14, {"别跟了", "停止跟随", "不要跟了", "别看了", NULL}, NULL, 0.0f, "跟随停止"},
     {15, {"跟着手掌", "手势跟随", "手势跟踪", "跟随手势", "跟着手", NULL}, NULL, 0.0f, "手势跟随启动"},
     {16, {"停止手势", "别跟手了", NULL}, NULL, 0.0f, "手势跟随停止"},
+    {18, {"停", "停止", "别动了", "不要动", NULL}, NULL, 0.0f, "紧急停止"},
 };
 static const int CMD_TABLE_SIZE = sizeof(CMD_TABLE) / sizeof(CMD_TABLE[0]);
 
@@ -368,6 +370,19 @@ int voice_ctl_execute(int action_id) {
     case 15:
         printf("[VoiceCtl] 启动手势跟随模式...\n");
         return tracker_start(TRACKER_TYPE_GESTURE);
+    case 18: {
+        /* 紧急停止 — 平滑刹车 */
+        printf("[VoiceCtl] 紧急停止，执行平滑刹车...\n");
+        Pose6DOF current_pose = {
+            g_target_r, g_target_p, g_target_y,
+            g_target_body, g_target_ant_r, g_target_ant_l
+        };
+        Pose6DOF zero_vel = {0};
+        action_executor_abort_smooth(g_async_motor_ctrl, &current_pose, &zero_vel);
+        g_target_r = 0; g_target_p = 0; g_target_y = 0;
+        g_target_body = 0; g_target_ant_r = 0; g_target_ant_l = 0;
+        return 0;
+    }
     default:
         break;
     }
@@ -407,7 +422,72 @@ int voice_ctl_execute(int action_id) {
 }
 
 // ==========================================
-// 人脸跟踪 暂停/恢复 (NPU 分时复用)
+// LLM 自主编排动作执行
+// ==========================================
+
+int voice_ctl_execute_choreography(const char *json_str) {
+    if (!g_initialized || !g_async_motor_ctrl) {
+        printf("[VoiceCtl] 警告: 尚未初始化，无法执行编排\n");
+        return -1;
+    }
+
+    ActionSequence *seq = action_executor_get_pool();
+    action_executor_reset_abort();
+
+    /* 暂停 tracker (TCM 分时复用) */
+    bool tracker_was_running = voice_ctl_tracker_any_running();
+    if (tracker_was_running) {
+        voice_ctl_tracker_pause_all();
+    }
+
+    /* 解析 */
+    int ret = action_executor_parse(json_str, seq);
+    if (ret != ACTION_EXEC_OK) {
+        printf("[VoiceCtl] 编排 JSON 解析失败: %d\n", ret);
+        if (tracker_was_running) voice_ctl_tracker_resume_all();
+        return ret;
+    }
+
+    /* 校验 */
+    ret = action_executor_validate(seq);
+    if (ret != ACTION_EXEC_OK) {
+        printf("[VoiceCtl] 编排校验失败: %d\n", ret);
+        if (tracker_was_running) voice_ctl_tracker_resume_all();
+        return ret;
+    }
+
+    /* 执行 */
+    Pose6DOF initial = {g_target_r, g_target_p, g_target_y,
+                        g_target_body, g_target_ant_r, g_target_ant_l};
+    ret = action_executor_run(seq, g_async_motor_ctrl, &initial);
+
+    /* 更新目标缓存 */
+    if (ret == ACTION_EXEC_OK && seq->count > 0) {
+        /* 从执行引擎的最终状态更新 */
+        /* 简化: 假设最后一个动作执行完毕后的目标值 */
+        /* 实际应由执行引擎返回最终位姿 */
+    }
+
+    /* 恢复 tracker */
+    if (tracker_was_running) {
+        voice_ctl_tracker_resume_all();
+    }
+
+    return ret;
+}
+
+void voice_ctl_get_current_pose(float *roll, float *pitch, float *yaw,
+                                float *body, float *ant_r, float *ant_l) {
+    if (roll) *roll = g_target_r;
+    if (pitch) *pitch = g_target_p;
+    if (yaw) *yaw = g_target_y;
+    if (body) *body = g_target_body;
+    if (ant_r) *ant_r = g_target_ant_r;
+    if (ant_l) *ant_l = g_target_ant_l;
+}
+
+// ==========================================
+// 人脸跟踪 暂停/恢复 (TCM 分时复用)
 // ==========================================
 
 void voice_ctl_tracker_pause_all(void) {

@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "reachy-motion": {
+            "command": "python3",
+            "args": ["@MCP_SERVER_SCRIPT@"],
+            "env": {
+                "ENGINE_SOCKET": "/tmp/reachy_action_executor.sock"
+            }
+        }
+    }
+}
