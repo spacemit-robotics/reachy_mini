@@ -128,6 +128,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tracker_generic
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vision
     ${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/action_executor
 )
 
 link_directories(
@@ -194,6 +195,12 @@ set(TRACKER_APP_SOURCES
 # 视觉 C 封装层
 set(VISION_WRAPPER_SOURCES
     src/vision/vision_wrapper.cpp
+)
+
+# LLM 动作编排执行引擎
+set(ACTION_EXECUTOR_SOURCES
+    src/action_executor/action_executor.c
+    src/action_executor/action_stream_parser.c
 )
 
 # ============================================================================
@@ -293,6 +300,42 @@ install(TARGETS test_api test_motion face_tracker gesture_tracker
 )
 
 # ============================================================================
+# 可执行文件 4.7: test_action_executor — 动作编排引擎单元测试
+# ============================================================================
+find_package(PkgConfig QUIET)
+pkg_check_modules(CJSON_TEST QUIET libcjson)
+if(CJSON_TEST_FOUND)
+    add_executable(test_action_executor
+        src/action_executor/test_action_executor.c
+        src/action_executor/action_executor.c
+        src/action_executor/action_stream_parser.c
+        src/talent_show/dance_interface.c
+        src/talent_show/dance_player.c
+        src/talent_show/audio/audio_player.c
+        ${MOTOR_CTL_SOURCES}
+        ${KINEMATICS_SOURCES}
+        ${TRACKER_MANAGER_SOURCES}
+    )
+    target_compile_definitions(test_action_executor PRIVATE
+        DANCE_AUDIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio"
+    )
+    pkg_check_modules(TEST_SNDFILE QUIET sndfile)
+    pkg_check_modules(TEST_SAMPLERATE QUIET samplerate)
+    pkg_check_modules(TEST_ALSA QUIET alsa)
+    target_link_libraries(test_action_executor
+        ${MOTOR_LIBS}
+        ${CJSON_TEST_LIBRARIES}
+        ${TEST_SNDFILE_LIBRARIES}
+        ${TEST_SAMPLERATE_LIBRARIES}
+        ${TEST_ALSA_LIBRARIES}
+    )
+    target_include_directories(test_action_executor PRIVATE
+        ${CJSON_TEST_INCLUDE_DIRS}
+    )
+    install(TARGETS test_action_executor RUNTIME DESTINATION bin)
+endif()
+
+# ============================================================================
 # 可执行文件 5: reachy_voice_bot — 独立语音对话控制机器人 (结合电机与 AI 引擎)
 # ============================================================================
 option(BUILD_VOICE_BOT "Build the reachy_voice_bot target" ON)
@@ -322,6 +365,9 @@ if(BUILD_VOICE_BOT)
     # portaudio — runtime dependency of libspace_audio
     pkg_check_modules(PORTAUDIO REQUIRED portaudio-2.0)
 
+    # cJSON — JSON 解析 (action_executor 依赖)
+    pkg_check_modules(CJSON REQUIRED libcjson)
+
     message(STATUS "[VoiceBot] onnx: ${ONNXRUNTIME_LIB}, curl: ${CURL_FOUND}")
 
     add_executable(reachy_voice_bot
@@ -338,6 +384,7 @@ if(BUILD_VOICE_BOT)
         ${MOTOR_CTL_SOURCES}
         ${KINEMATICS_SOURCES}
         ${TRACKER_MANAGER_SOURCES}
+        ${ACTION_EXECUTOR_SOURCES}
         src/talent_show/dance_interface.c
         src/talent_show/dance_player.c
         src/talent_show/audio/audio_player.c
@@ -358,6 +405,7 @@ if(BUILD_VOICE_BOT)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/voice/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/talent_show/audio
+        ${CJSON_INCLUDE_DIRS}
     )
     target_include_directories(reachy_voice_bot SYSTEM PRIVATE
         ${SAMPLERATE_INCLUDE_DIRS}
@@ -398,6 +446,7 @@ if(BUILD_VOICE_BOT)
         ${FFTW3_LIBRARIES}
         ${ALSA_LIBRARIES}
         ${PORTAUDIO_LIBRARIES}
+        ${CJSON_LIBRARIES}
         -lonnxruntime
         -lspacemit_ep
         -ludev
@@ -405,6 +454,27 @@ if(BUILD_VOICE_BOT)
 
     install(TARGETS reachy_voice_bot RUNTIME DESTINATION bin)
     install(FILES src/voice/configs/mcp_robot.json DESTINATION etc/reachy)
+
+    # MCP Server (Python) 安装
+    install(FILES
+        src/voice/services/robot_motion/__init__.py
+        src/voice/services/robot_motion/server.py
+        src/voice/services/robot_motion/bridge.py
+        src/voice/services/robot_motion/tools.py
+        src/voice/services/robot_motion/resources.py
+        DESTINATION lib/reachy_motion_mcp
+    )
+
+    # 生成 config.json 时替换为绝对安装路径
+    set(MCP_SERVER_SCRIPT "${CMAKE_INSTALL_PREFIX}/lib/reachy_motion_mcp/server.py")
+    configure_file(
+        src/voice/services/robot_motion/config.json.in
+        ${CMAKE_CURRENT_BINARY_DIR}/config.json
+        @ONLY
+    )
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/config.json
+        DESTINATION lib/reachy_motion_mcp
+    )
 endif()
 
 

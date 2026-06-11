@@ -104,6 +104,12 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                 current_messages = *ctx.conversation_messages;
             }
 
+            bool in_think = false;
+            std::string think_buffer;
+            bool tts_enabled = true;
+            bool has_started = false;
+            bool llm_error = false;
+
             auto result = ctx.llm->chat_stream(
                 current_messages,
                 [&](const std::string &chunk, bool is_done, const std::string &error) -> bool {
@@ -111,6 +117,7 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                         return false;
                     if (!error.empty()) {
                         std::cerr << "\n" << getTimestamp() << " [LLM错误] " << error << std::endl;
+                        llm_error = true;
                         return false;
                     }
                     if (is_done)
@@ -119,11 +126,62 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                     if (!chunk.empty()) {
                         std::cout << chunk << std::flush;
                         full_response += chunk;
-                        text_buffer.addText(chunk);
 
-                        while (text_buffer.hasSentence() && !g_barge_in) {
-                            std::string sentence = text_buffer.getNextSentence();
-                            synthesizeSentence(sentence);
+                        if (!has_started) {
+                            size_t first_non_ws = full_response.find_first_not_of(" \t\n\r");
+                            if (first_non_ws != std::string::npos) {
+                                has_started = true;
+                                char first_char = full_response[first_non_ws];
+                                if (first_char == '{' || first_char == '[' || first_char == '`') {
+                                    tts_enabled = false;
+                                }
+                            }
+                        }
+
+                        if (tts_enabled) {
+                            std::string speakable_chunk;
+                            for (char c : chunk) {
+                                if (!in_think) {
+                                    think_buffer += c;
+                                    if (think_buffer == "<think>") {
+                                        in_think = true;
+                                        think_buffer.clear();
+                                    } else if (std::string("<think>").substr(0, think_buffer.length()) != think_buffer) {
+                                        speakable_chunk += think_buffer[0];
+                                        think_buffer.erase(0, 1);
+                                        while (!think_buffer.empty() && std::string("<think>").substr(0, think_buffer.length()) != think_buffer) {
+                                            speakable_chunk += think_buffer[0];
+                                            think_buffer.erase(0, 1);
+                                        }
+                                    }
+                                } else {
+                                    think_buffer += c;
+                                    if (think_buffer == "</think>") {
+                                        in_think = false;
+                                        think_buffer.clear();
+                                    } else if (std::string("</think>").substr(0, think_buffer.length()) != think_buffer) {
+                                        think_buffer.erase(0, 1);
+                                        while (!think_buffer.empty() && std::string("</think>").substr(0, think_buffer.length()) != think_buffer) {
+                                            think_buffer.erase(0, 1);
+                                        }
+                                    }
+                                }
+                            }
+
+                            std::string final_speakable;
+                            for (char c : speakable_chunk) {
+                                if (c != '`' && c != '{' && c != '}' && c != '[' && c != ']' && c != '*' && c != '#') {
+                                    final_speakable += c;
+                                }
+                            }
+
+                            if (!final_speakable.empty()) {
+                                text_buffer.addText(final_speakable);
+                                while (text_buffer.hasSentence() && !g_barge_in) {
+                                    std::string sentence = text_buffer.getNextSentence();
+                                    synthesizeSentence(sentence);
+                                }
+                            }
                         }
                     }
                     return true;
@@ -132,29 +190,95 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
 
             std::cout << std::endl;
 
-            if (result.HasToolCalls()) {
-                std::cout << getTimestamp() << " [Tool Call] 检测到工具调用\n";
-
-                {
-                    std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
-                    ctx.conversation_messages->push_back(spacemit_llm::ChatMessage::Assistant(
-                        result.content, result.tool_calls_json));
+            if (llm_error) {
+                std::cout << getTimestamp() << " [MCP] LLM 发生错误，撤销历史记录并终止本轮对话\n";
+                std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
+                if (!ctx.conversation_messages->empty() && ctx.conversation_messages->back().role == spacemit_llm::ChatMessage::Role::USER) {
+                    ctx.conversation_messages->pop_back();
                 }
+                break;
+            }
+
+            if (result.HasToolCalls()) {
+                std::cout << "\033[1;33m\n========================================\n";
+                std::cout << getTimestamp() << " [Tool Call] 检测到工具调用\n";
+                std::cout << getTimestamp() << " [Tool Call] JSON: \n" << result.tool_calls_json << "\n";
+                std::cout << "========================================\033[0m\n";
+            } else if (!result.content.empty()) {
+                // Fallback: 小模型可能将工具调用作为纯文本输出（非结构化 tool_calls）
+                // 检测 content 是否是 {"name": "...", "arguments": {...}} 格式
+                std::string trimmed = result.content;
+                size_t start = trimmed.find_first_not_of(" \t\n\r");
+                if (start != std::string::npos && trimmed[start] == '{' &&
+                    trimmed.find("\"name\"") != std::string::npos &&
+                    trimmed.find("\"arguments\"") != std::string::npos) {
+                    // 提取 JSON 块（从第一个 { 到最后一个 }）
+                    size_t end = trimmed.rfind('}');
+                    if (end != std::string::npos && end > start) {
+                        std::string json_str = trimmed.substr(start, end - start + 1);
+                        try {
+                            auto parsed = json::parse(json_str);
+                            if (parsed.contains("name") && parsed.contains("arguments")) {
+                                // 构造标准 tool_calls_json 格式
+                                json tool_calls_arr = json::array();
+                                tool_calls_arr.push_back({
+                                    {"id", "call_fallback_0"},
+                                    {"type", "function"},
+                                    {"function", {
+                                        {"name", parsed["name"]},
+                                        {"arguments", parsed["arguments"]}
+                                    }}
+                                });
+                                result.tool_calls_json = tool_calls_arr.dump();
+                                std::cout << "\033[1;33m\n========================================\n";
+                                std::cout << getTimestamp() << " [Tool Call] 文本 fallback 解析成功\n";
+                                std::cout << getTimestamp() << " [Tool Call] JSON: \n" << result.tool_calls_json << "\n";
+                                std::cout << "========================================\033[0m\n";
+                            }
+                        } catch (...) {
+                            // JSON 解析失败，当作普通文本处理
+                        }
+                    }
+                }
+            }
+
+            if (result.HasToolCalls()) {
+                // 如果是 1.5b/3b 及大模型，先将包含 tool_calls 的 Assistant 消息压入历史
+                if (!ctx.is_05b_model) {
+                    std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
+                    ctx.conversation_messages->push_back(
+                        spacemit_llm::ChatMessage::Assistant(result.content, result.tool_calls_json));
+                }
+
+                std::string assistant_text = result.content;
+                if (assistant_text.empty() || assistant_text.length() > 60) {
+                    assistant_text = "好的。";
+                }
+                std::string exec_feedback;
 
                 try {
                     auto tool_calls = json::parse(result.tool_calls_json);
                     for (const auto &tc : tool_calls) {
                         std::string tool_name = tc["function"]["name"];
                         json tool_args = tc["function"]["arguments"];
+                        std::string tool_call_id = tc.value("id", "");
+
+                        bool parse_success = true;
+                        std::string result_text;
 
                         if (tool_args.is_string()) {
                             try {
-                                tool_args = json::parse(tool_args.get<std::string>());
-                            } catch (...) {
+                                std::string args_str = tool_args.get<std::string>();
+                                if (args_str.empty()) {
+                                    tool_args = json::object(); // 兼容空字符串的情况
+                                } else {
+                                    tool_args = json::parse(args_str);
+                                }
+                            } catch (const std::exception &e) {
+                                parse_success = false;
+                                result_text = std::string("JSON解析错误: ") + e.what() + "。请确保参数是合法的JSON对象。";
                             }
                         }
-
-                        std::string result_text;
 
                         // 检测连续重复调用同一工具
                         if (tool_name == last_tool_name) {
@@ -168,60 +292,85 @@ void processText(VoicePipelineContext &ctx, const std::string &text) {
                             std::cout << getTimestamp() << " [MCP] 检测到重复调用 " << tool_name
                                 << "，强制终止工具循环\n";
                             result_text = "工具已执行过，不要重复调用。请直接用语言回复用户。";
-                            std::string tc_id = tc.value("id", "");
-                            {
-                                std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
-                                ctx.conversation_messages->push_back(
-                                    spacemit_llm::ChatMessage::Tool(result_text, tc_id));
-                            }
                             // 强制跳出工具循环，进入文本生成
                             round = MAX_TOOL_ROUNDS;
                             continue;
                         }
 
-                        // 优先尝试本地工具拦截（由 ActionProvider 处理）
-                        if (tryLocalToolCall(ctx, tool_name, tool_args, result_text)) {
-                            std::cout << getTimestamp() << " [LocalTool] 本地执行: " << tool_name
-                                << " -> " << result_text << "\n";
-                            // 本地动作执行成功后，不再进入下一轮 LLM 调用
-                            // 避免小模型在缺乏上下文时生成无意义回复（如"抱歉，我没听懂"）
-                            round = MAX_TOOL_ROUNDS;
-                        } else {
-                            // 走网络 MCP 调用前先验证工具是否存在
-                            std::string server = ctx.mcp_manager->findServerForTool(tool_name);
-                            if (server.empty()) {
-                                // 工具不存在，返回错误信息
-                                result_text = "错误: 工具 '" + tool_name + "' 不存在，请检查工具名称";
-                                std::cout << getTimestamp() << " [MCP] 工具不存在: " << tool_name << "\n";
+                        if (parse_success) {
+                            // 优先尝试本地工具拦截（由 ActionProvider 处理）
+                            if (tryLocalToolCall(ctx, tool_name, tool_args, result_text)) {
+                                std::cout << getTimestamp() << " [LocalTool] 本地执行: " << tool_name
+                                    << " -> " << result_text << "\n";
+                                // 本地动作执行成功后，不再进入下一轮 LLM 调用
+                                // 避免小模型在缺乏上下文时生成无意义回复（如"抱歉，我没听懂"）
+                                round = MAX_TOOL_ROUNDS;
                             } else {
-                                std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
-                                    << server << " 参数: " << tool_args.dump() << std::endl;
-
-                                auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
-
-                                if (tool_result.success && !tool_result.contents.empty()) {
-                                    result_text = tool_result.contents[0];
-                                } else if (!tool_result.error.empty()) {
-                                    result_text = "错误: " + tool_result.error;
+                                // 走网络 MCP 调用前先验证工具是否存在
+                                std::string server = ctx.mcp_manager->findServerForTool(tool_name);
+                                if (server.empty()) {
+                                    // 工具不存在，返回错误信息
+                                    result_text = "错误: 工具 '" + tool_name + "' 不存在，请检查工具名称";
+                                    std::cout << getTimestamp() << " [MCP] 工具不存在: " << tool_name << "\n";
                                 } else {
-                                    result_text = tool_result.rawResult.dump();
+                                    std::cout << getTimestamp() << " [MCP] 调用: " << tool_name << " @ "
+                                        << server << " 参数: " << tool_args.dump() << std::endl;
+
+                                    auto tool_result = ctx.mcp_manager->callTool(tool_name, tool_args);
+
+                                    if (tool_result.success && !tool_result.contents.empty()) {
+                                        result_text = tool_result.contents[0];
+                                    } else if (!tool_result.error.empty()) {
+                                        result_text = "错误: " + tool_result.error;
+                                    } else {
+                                        result_text = tool_result.rawResult.dump();
+                                    }
+
+                                    std::cout << getTimestamp() << " [MCP] 结果: " << result_text
+                                        << std::endl;
                                 }
-
-                                std::cout << getTimestamp() << " [MCP] 结果: " << result_text
-                                    << std::endl;
                             }
-                        }
+                        } else {
+                            std::cout << getTimestamp() << " [MCP] JSON 参数解析失败，跳过重试并降级调用 play_emotion\n";
+                            json fallback_args = {{"emotion", "shy"}, {"intensity", 0.7}};
+                            std::string dummy;
+                            tryLocalToolCall(ctx, "play_emotion", fallback_args, dummy);
+                            round = MAX_TOOL_ROUNDS;
+                        } // end of if (parse_success)
 
-                        std::string tc_id = tc.value("id", "");
-                        {
+                        if (!ctx.is_05b_model) {
+                            // 1.5b/3b 及大模型：压入标准的 Tool 消息
                             std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
                             ctx.conversation_messages->push_back(
-                                spacemit_llm::ChatMessage::Tool(result_text, tc_id));
+                                spacemit_llm::ChatMessage::Tool(result_text, tool_call_id));
+                        } else {
+                            // 0.5b 模型：更新 feedback，后续统一存为 System 消息
+                            exec_feedback += "[" + tool_name + " 执行反馈: " + result_text + "] ";
                         }
                     }
                 } catch (const std::exception &e) {
-                    std::cerr << getTimestamp() << " [MCP] 工具调用解析错误: " << e.what()
+                    std::cerr << getTimestamp() << " [MCP] 工具调用顶层解析错误: " << e.what()
                                 << std::endl;
+                    if (ctx.is_05b_model) {
+                        exec_feedback += "[解析失败] ";
+                    }
+
+                    std::cout << getTimestamp() << " [MCP] 顶层 JSON 解析失败，跳过重试并降级调用 play_emotion\n";
+                    json fallback_args = {{"emotion", "shy"}, {"intensity", 0.7}};
+                    std::string dummy;
+                    tryLocalToolCall(ctx, "play_emotion", fallback_args, dummy);
+                    round = MAX_TOOL_ROUNDS;
+                }
+
+                // 只有 0.5b 模型在此处压入简化的助手回复与 System 反馈
+                if (ctx.is_05b_model) {
+                    std::lock_guard<std::mutex> lock(*ctx.conversation_mutex);
+                    ctx.conversation_messages->push_back(
+                        spacemit_llm::ChatMessage::Assistant(assistant_text));
+                    if (!exec_feedback.empty()) {
+                        ctx.conversation_messages->push_back(
+                            spacemit_llm::ChatMessage::System(exec_feedback));
+                    }
                 }
 
                 // NPU 围栏: 工具调用启动了 tracker 后，跳出循环不再生成文本

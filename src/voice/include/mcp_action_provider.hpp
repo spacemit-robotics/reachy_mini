@@ -24,7 +24,9 @@ struct PendingDance;
  */
 class MCPActionProvider {
 public:
-    MCPActionProvider();
+    MCPActionProvider(
+        bool is_small_model = false,
+        const std::vector<std::string> &tools_whitelist = {});
     ~MCPActionProvider() = default;
 
     /**
@@ -49,10 +51,26 @@ public:
 
 private:
     void initTools();
+    void initLegacyTools();
+    void initAtomicTools();
+    void initChoreographyTool();
+    void initFlatChoreographyTool();
 
     std::vector<mcp::Tool> tools_;
     std::map<std::string, int> tool_to_action_id_;
     PendingDance *pending_dance_ = nullptr;
+    bool is_small_model_ = false;
+    std::vector<std::string> tools_whitelist_;
+
+    /* 新增原子动作工具处理 */
+    bool executePoseHead(const mcp::json &args, std::string &out_result);
+    bool executePoseBody(const mcp::json &args, std::string &out_result);
+    bool executeAntennaRight(const mcp::json &args, std::string &out_result);
+    bool executeAntennaLeft(const mcp::json &args, std::string &out_result);
+    bool executePlayEmotion(const mcp::json &args, std::string &out_result);
+    bool executeCenterAll(const mcp::json &args, std::string &out_result);
+    bool executeChoreography(const mcp::json &args, std::string &out_result);
+    bool executeRobotAction(const mcp::json &args, std::string &out_result);
 };
 
 #endif  // USE_MCP

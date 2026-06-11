@@ -38,7 +38,15 @@ bool loadMCPConfig(const std::string &config_path, MCPConfig &config) {
         json j = json::parse(file);
 
         if (j.contains("system_prompt")) {
-            config.system_prompt = j["system_prompt"].get<std::string>();
+            if (j["system_prompt"].is_array()) {
+                std::string combined;
+                for (const auto& line : j["system_prompt"]) {
+                    combined += line.get<std::string>();
+                }
+                config.system_prompt = combined;
+            } else {
+                config.system_prompt = j["system_prompt"].get<std::string>();
+            }
         }
 
         success = true;
@@ -63,6 +71,13 @@ bool loadMCPConfig(const std::string &config_path, MCPConfig &config) {
 
         if (j.contains("registry_url")) {
             config.registry_url = j["registry_url"].get<std::string>();
+        }
+
+        if (j.contains("tools_whitelist")) {
+            config.tools_whitelist.clear();
+            for (const auto &item : j["tools_whitelist"]) {
+                config.tools_whitelist.push_back(item.get<std::string>());
+            }
         }
     } catch (const std::exception &e) {
         std::cerr << getTimestamp() << " [MCP] 配置解析错误: " << e.what() << "\n";

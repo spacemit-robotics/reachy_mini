@@ -5,7 +5,7 @@ tests:
     description: Verifies configuration parsing, invalid device handling, simulator gRPC loops and IPC status.
     category: functional
     scopes: [pr]
-    timeout_s: 60  # 所有用例均不阻塞，60秒内必定跑完
+    timeout_s: 1200  # 所有用例均不阻塞，60秒内必定跑完，ci test 环境需要下载本地模型，预留 20 分钟
     workdir: sdk
     command: |
       bash application/native/reachy_mini/tests/test_functional.sh
