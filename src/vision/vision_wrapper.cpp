@@ -237,29 +237,37 @@ bool vision_detect_faces(VisionServiceHandle vision_handle,
         frame = camera_ctx->current_frame;
     }
 
-    std::vector<VisionServiceResult> cpp_results;
-    VisionServiceStatus status =
-        vision_ctx->service->InferImage(frame, &cpp_results);
+    VisionServiceResponse response;
+    VisionServiceStatus status = vision_ctx->service->Infer(frame, &response);
 
-    if (status != VISION_SERVICE_OK)
+    if (status != VISION_SERVICE_OK || !response.ok)
     {
         vision_ctx->last_error = vision_ctx->service->LastError();
         *result_count = 0;
         return false;
     }
 
-    // 转换结果
-    *result_count = std::min(static_cast<int>(cpp_results.size()), max_results);
-    for (int i = 0; i < *result_count; i++)
+    // 转换结果：从统一的 vision::Result variant 中提取人脸检测框
+    int out_index = 0;
+    for (const auto &result : response.results)
     {
-        results[i].x1 = cpp_results[i].x1;
-        results[i].y1 = cpp_results[i].y1;
-        results[i].x2 = cpp_results[i].x2;
-        results[i].y2 = cpp_results[i].y2;
-        results[i].score = cpp_results[i].score;
-        results[i].class_id = cpp_results[i].label;  // 使用 label 字段
+        if (out_index >= max_results)
+            break;
+
+        const auto *detection = std::get_if<vision::Detection>(&result);
+        if (detection == nullptr)
+            continue;
+
+        results[out_index].x1 = detection->bbox.x1;
+        results[out_index].y1 = detection->bbox.y1;
+        results[out_index].x2 = detection->bbox.x2;
+        results[out_index].y2 = detection->bbox.y2;
+        results[out_index].score = detection->score;
+        results[out_index].class_id = detection->label;
+        out_index++;
     }
 
+    *result_count = out_index;
     return true;
 }
 
