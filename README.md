@@ -110,6 +110,16 @@ Lunch menu... pick a combo:
 ```
 m  #执行编译
 ```
+
+仅单独编译 Reachy Mini 时，需要先构建其组件依赖：
+
+```bash
+cd application/native/reachy_mini
+mm --with-deps
+```
+
+普通 `mm` 仅适用于依赖已安装到 staging 目录的情况；交叉编译缺少依赖时会直接报错并提示使用 `mm --with-deps`。
+
 **_所有依赖将在执行编译时检测和下载，系统依赖选择 y 自动安装_**
 
 

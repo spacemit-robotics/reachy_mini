@@ -16,7 +16,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # ============================================================================
 # 路径定义
 # ============================================================================
-set(STAGING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../output/staging")
+set(STAGING_DIR "${CMAKE_INSTALL_PREFIX}" CACHE PATH "SDK staging prefix containing prebuilt component artifacts")
 
 # ============================================================================
 # 依赖组件导入 — 通过 CMake config 导入（由构建系统 package.xml 保证先编译）
@@ -56,6 +56,13 @@ function(ensure_component_built _name _rel_path)
             message(STATUS "[Internal] Found ${_name} at ${_found_lib}")
             set_target_properties(components::${_name} PROPERTIES IMPORTED_LOCATION "${_found_lib}")
         else()
+            if(CMAKE_CROSSCOMPILING)
+                message(FATAL_ERROR
+                    "${_name} is missing from ${STAGING_DIR}. "
+                    "Build Reachy Mini with dependencies first: mm --with-deps"
+                )
+            endif()
+
             # 库缺失，创建自动构建目标
             set(_src_dir "${COMPONENTS_SRC_ROOT}/${_rel_path}")
             set(_build_dir "${CMAKE_BINARY_DIR}/external/${_name}")
