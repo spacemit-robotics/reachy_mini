@@ -12,25 +12,19 @@
   <depend>llm</depend>
   <depend>mcp</depend>
   <system_depend>opencv-spacemit</system_depend>
-  <system_depend>libcjson-dev</system_depend>
-  <system_depend check="pkg-config --exists portaudio-2.0">portaudio19-dev</system_depend>
-  <system_depend check="pkg-config --exists sndfile">libsndfile1-dev</system_depend>
-  <system_depend check="pkg-config --exists samplerate">libsamplerate0-dev</system_depend>
-  <system_depend check="pkg-config --exists alsa">libasound2-dev</system_depend>
-  <system_depend check="pkg-config --exists fftw3f">libfftw3-dev</system_depend>
-  <system_depend check="pkg-config --exists libcurl">libcurl4-openssl-dev</system_depend>
-  <system_depend check="pkg-config --exists libgpiod">libgpiod-dev</system_depend>
-  <system_depend check="pkg-config --exists protobuf">libprotobuf-dev</system_depend>
-  <system_depend check="pkg-config --exists libudev">libudev-dev</system_depend>
-  <system_depend check="which protoc">protobuf-compiler</system_depend>
-  <system_depend check="pkg-config --exists grpc++">libgrpc++-dev</system_depend>
-  <system_depend check="which grpc_cpp_plugin">protobuf-compiler-grpc</system_depend>
-  <system_depend check="which pkg-config">pkg-config</system_depend>
-  <system_depend check="which cmake">cmake</system_depend>
-  <system_depend check="meson --version">meson</system_depend>
-  <system_depend check="ninja --version">ninja-build</system_depend>
-  <system_depend check="rustc --version">rustc</system_depend>
-  <system_depend check="cargo --version">cargo</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="libcjson">libcjson-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="portaudio-2.0">portaudio19-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="sndfile">libsndfile1-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="samplerate">libsamplerate0-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="alsa">libasound2-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="fftw3f">libfftw3-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="libcurl">libcurl4-openssl-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="libgpiod">libgpiod-dev</system_depend>
+  <system_depend realm="target" check_kind="pkg-config" check_arg="protobuf">libprotobuf-dev</system_depend>
+  <system_depend check_kind="pkg-config" check_arg="libudev">libudev-dev</system_depend>
+  <system_depend realm="host" check_kind="command" check_arg="protoc">protobuf-compiler</system_depend>
+  <system_depend realm="target" check_kind="pkg-config" check_arg="grpc++">libgrpc++-dev</system_depend>
+  <system_depend realm="host" check_kind="command" check_arg="grpc_cpp_plugin">protobuf-compiler-grpc</system_depend>
 
   <export>
     <build_type>cmake</build_type>
