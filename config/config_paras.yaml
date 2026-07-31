@@ -24,7 +24,7 @@ audio:
 # ==============================================================================
 llm:
   # LLM API 地址 (必填)
-  url: "http://localhost:8080"
+  url: "http://localhost:8085"
   # LLM 模型名称
   model: "qwen2.5:1.5b"
   # 最大生成 token 数

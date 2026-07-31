@@ -742,6 +742,22 @@ int main(int argc, char *argv[])
                     {
                         cmd += " --model " + cfg.llm_model;
                     }
+                    // 从 llm_url 中提取端口号并传递给脚本
+                    size_t colon_pos = cfg.llm_url.rfind(':');
+                    if (colon_pos != std::string::npos)
+                    {
+                        std::string port_str = cfg.llm_url.substr(colon_pos + 1);
+                        size_t slash_pos = port_str.find('/');
+                        if (slash_pos != std::string::npos)
+                        {
+                            port_str = port_str.substr(0, slash_pos);
+                        }
+                        if (!port_str.empty() &&
+                            std::all_of(port_str.begin(), port_str.end(), ::isdigit))
+                        {
+                            cmd += " --port " + port_str;
+                        }
+                    }
                 }
                 else
                 {

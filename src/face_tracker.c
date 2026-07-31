@@ -165,7 +165,7 @@ int main(int argc, char *argv[])
 
     while (g_running)
     {
-        // NPU 分时复用：收到 SIGUSR1 时暂停推理循环
+        // 分时复用：收到 SIGUSR1 时暂停推理循环
         if (g_paused) {
             usleep(50000);
             continue;
