@@ -16,37 +16,50 @@ set -euo pipefail
 START_SERVER=0
 LLM_MODEL_NAME=""
 CONFIG_FILE=""
+LLAMA_PORT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --start-server) START_SERVER=1; shift ;;
     --model) LLM_MODEL_NAME="$2"; shift 2 ;;
     --config) CONFIG_FILE="$2"; shift 2 ;;
+    --port) LLAMA_PORT="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 
-# 从配置文件解析 llm.model (简易 YAML 解析，仅在未通过 --model 指定时生效)
-if [ -z "$LLM_MODEL_NAME" ] && [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-  # 提取 llm.model 字段值，如 "qwen2.5:0.5b"
-  CFG_MODEL=$( (grep -A5 '^llm:' "$CONFIG_FILE" || true) | (grep '^\s*model:' || true) | head -1 \
-    | sed 's/.*model:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
-  if [ -n "$CFG_MODEL" ]; then
-    # 将 llm.model 格式 (如 "qwen2.5:0.5b") 映射为 gguf 文件名
-    case "$CFG_MODEL" in
-      qwen2.5:0.5b|qwen2.5-0.5b*)
-        LLM_MODEL_NAME="qwen2.5-0.5b-instruct-q4_0.gguf" ;;
-      qwen2.5:1.5b|qwen2.5-1.5b*)
-        LLM_MODEL_NAME="qwen2.5-1.5b-instruct-q4_0.gguf" ;;
-      qwen2.5:3b|qwen2.5-3b*)
-        LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
-      glm-edge:1.5b|glm-edge-1.5b*)
-        LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
-      qwen3:30b*|Qwen3-30B*)
-        LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
-      *.gguf)
-        LLM_MODEL_NAME="$CFG_MODEL" ;;
-    esac
+# 从配置文件解析 llm.model 和 llm.url (端口)
+if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+  if [ -z "$LLM_MODEL_NAME" ]; then
+    # 提取 llm.model 字段值，如 "qwen2.5:0.5b"
+    CFG_MODEL=$( (grep -A5 '^llm:' "$CONFIG_FILE" || true) | (grep '^\s*model:' || true) | head -1 \
+      | sed 's/.*model:\s*["'\'']\?\([^"'\'']*\)["'\'']\?.*/\1/' | tr -d ' ')
+    if [ -n "$CFG_MODEL" ]; then
+      # 将 llm.model 格式 (如 "qwen2.5:0.5b") 映射为 gguf 文件名
+      case "$CFG_MODEL" in
+        qwen2.5:0.5b|qwen2.5-0.5b*)
+          LLM_MODEL_NAME="qwen2.5-0.5b-instruct-q4_0.gguf" ;;
+        qwen2.5:1.5b|qwen2.5-1.5b*)
+          LLM_MODEL_NAME="qwen2.5-1.5b-instruct-q4_0.gguf" ;;
+        qwen2.5:3b|qwen2.5-3b*)
+          LLM_MODEL_NAME="qwen2.5-3b-instruct-q4_0.gguf" ;;
+        glm-edge:1.5b|glm-edge-1.5b*)
+          LLM_MODEL_NAME="glm-edge-1.5b-chat-q4_0.gguf" ;;
+        qwen3:30b*|Qwen3-30B*)
+          LLM_MODEL_NAME="Qwen3-30B-A3B-Q4_0.gguf" ;;
+        *.gguf)
+          LLM_MODEL_NAME="$CFG_MODEL" ;;
+      esac
+    fi
+  fi
+
+  if [ -z "$LLAMA_PORT" ]; then
+    # 从配置文件提取 llm.url 里的端口号 (例如 http://localhost:8085 -> 8085)
+    CFG_PORT=$( (grep -A5 '^llm:' "$CONFIG_FILE" || true) | (grep '^\s*url:' || true) | head -1 \
+      | grep -oE ':[0-9]+' | tr -d ':' || true)
+    if [ -n "$CFG_PORT" ]; then
+      LLAMA_PORT="$CFG_PORT"
+    fi
   fi
 fi
 
@@ -137,7 +150,7 @@ fi
 # --------------------------------------------------------------------------
 LLAMA_PID_FILE="/tmp/reachy_llama_server.pid"
 LLM_MODEL="$LLM_CACHE/$LLM_MODEL_NAME"
-LLAMA_PORT=8080
+LLAMA_PORT="${LLAMA_PORT:-8085}"
 
 if [ "$START_SERVER" -eq 1 ]; then
   # 跳过云端 API 模型 (不需要启动本地 llama-server)
@@ -150,8 +163,30 @@ if [ "$START_SERVER" -eq 1 ]; then
   if [ -f "$LLAMA_PID_FILE" ]; then
     OLD_PID=$(cat "$LLAMA_PID_FILE" 2>/dev/null)
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-      echo "llama-server already running (PID: $OLD_PID), skip."
-      exit 0
+      # 校验旧进程是否真正健康运行在目标端口 LLAMA_PORT 上
+      IS_HEALTHY=0
+      if command -v curl >/dev/null 2>&1; then
+        if curl -sf "http://127.0.0.1:$LLAMA_PORT/health" >/dev/null 2>&1; then
+          IS_HEALTHY=1
+        fi
+      else
+        if wget -q -O /dev/null "http://127.0.0.1:$LLAMA_PORT/health" 2>/dev/null; then
+          IS_HEALTHY=1
+        fi
+      fi
+
+      if [ "$IS_HEALTHY" -eq 1 ]; then
+        echo "llama-server already running on port $LLAMA_PORT (PID: $OLD_PID), skip."
+        exit 0
+      else
+        echo "Found stale/mismatched llama-server (PID: $OLD_PID) not listening on port $LLAMA_PORT, stopping it..."
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 1
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+          kill -9 "$OLD_PID" 2>/dev/null || true
+        fi
+        rm -f "$LLAMA_PID_FILE"
+      fi
     fi
   fi
 
